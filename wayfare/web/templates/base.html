@@ -48,6 +48,10 @@
   button.ghost { background: transparent; color: var(--fg); border-color: var(--line); }
   .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
   .between { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  /* Header buttons. Inside .between they are a flex item, so they shrink to
+     min-content and wrap onto two lines beside a long heading; these keep
+     them on one line as a single group. */
+  .actions { flex: none; flex-wrap: nowrap; white-space: nowrap; }
   .pill {
     font-size: .72rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: .04em; padding: .18rem .5rem; border-radius: 99px;

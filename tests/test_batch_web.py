@@ -121,16 +121,34 @@ def test_the_upload_field_accepts_more_than_one_file(client):
 
 
 def test_finishing_setup_offers_the_way_back(client, monkeypatch):
+    # A dict, exactly as calendar_api.connection_status returns. Faking it as
+    # an object is what let a live AttributeError through a green suite.
     monkeypatch.setattr(
-        web, "connection_status", lambda: type("S", (), {"connected": True, "account": None})()
+        web,
+        "connection_status",
+        lambda: {"connected": True, "account": None, "client_uploaded": True},
     )
     body = client.get("/setup?done=1", headers=HTML).text
     assert "showModal" in body
     assert "Back to wayfare" in body
 
 
+def test_done_is_harmless_against_the_real_connection_status(client):
+    """No monkeypatch on purpose.
+
+    Faking connection_status as an object let a live 500 through a green
+    suite: the real function returns a dict, and `status.connected` works in
+    a Jinja template but not in Python.
+    """
+    assert client.get("/setup?done=1", headers=HTML).status_code == 200
+
+
 def test_returning_to_setup_later_does_not_pop_a_dialog(client, monkeypatch):
+    # A dict, exactly as calendar_api.connection_status returns. Faking it as
+    # an object is what let a live AttributeError through a green suite.
     monkeypatch.setattr(
-        web, "connection_status", lambda: type("S", (), {"connected": True, "account": None})()
+        web,
+        "connection_status",
+        lambda: {"connected": True, "account": None, "client_uploaded": True},
     )
     assert "showModal" not in client.get("/setup", headers=HTML).text

@@ -342,7 +342,7 @@ def setup_page(
             # Only after a setup step that just succeeded, never on every visit:
             # someone who came back to change a setting does not need a modal
             # telling them they are finished.
-            "just_finished": bool(done) and status.connected,
+            "just_finished": bool(done) and bool(status.get("connected")),
             "model": llm_extractor.status(),
             "ocr_ready": ocr_available(),
             "barcodes_ready": barcode_extractor.available(),
