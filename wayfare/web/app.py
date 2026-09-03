@@ -44,6 +44,7 @@ from ..extractors import barcode as barcode_extractor
 from ..extractors import llm as llm_extractor
 from ..ocr import available as ocr_available
 from ..pipeline import process_file, process_text
+from ..schema import IssueLevel, Itinerary
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -541,6 +542,27 @@ def api_undo(count: int = 1, scope: Scope = Depends(require_owner)):
 # --- shared --------------------------------------------------------------
 
 
+def _read_one(path: Path, name: str):
+    """Extract one document, turning a failure into a finding rather than a 500.
+
+    A batch is a whole trip. One unreadable screenshot — a truncated paste, a
+    format tesseract will not open — must not throw away the flights that were
+    submitted alongside it, and the person needs to be told which file failed.
+    """
+    try:
+        return process_file(path, name)
+    except Exception as exc:  # noqa: BLE001 - any reader failure, reported not raised
+        failed = Itinerary()
+        failed.add_issue(
+            IssueLevel.ERROR,
+            "ingest.unreadable",
+            f"'{name}' could not be read ({type(exc).__name__}). "
+            "Everything else in this submission was still processed.",
+            "web",
+        )
+        return failed
+
+
 async def _run_submission(uploads, text: str, allow_promote: bool):
     """Ingest every input given, combine them into one trip, then commit.
 
@@ -564,7 +586,7 @@ async def _run_submission(uploads, text: str, allow_promote: bool):
         with tempfile.TemporaryDirectory(prefix="wayfare-upload-") as tmp:
             path = Path(tmp) / Path(upload.filename).name
             path.write_bytes(payload)
-            itineraries.append(process_file(path, upload.filename))
+            itineraries.append(_read_one(path, upload.filename))
         sources.append(upload.filename)
 
     if text.strip():

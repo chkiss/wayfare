@@ -83,6 +83,16 @@
   button.copy:hover { color: var(--fg); border-color: var(--muted); }
   /* Square, so the gear sits as an icon rather than a very short word. */
   button.icon { padding: .55rem .7rem; font-size: 1rem; line-height: 1; }
+  /* Drop target. Dashed only while something is being dragged over it, so the
+     form does not look like a construction site the rest of the time. */
+  #dropzone {
+    border: 1px dashed transparent; border-radius: 8px;
+    margin: -.4rem; padding: .4rem; transition: border-color .12s, background .12s;
+  }
+  #dropzone.over { border-color: var(--accent); background: rgba(127, 176, 224, .08); }
+  #dropzone .dz-hint { margin: .4rem 0 0; }
+  #picked { margin: .6rem 0 0; }
+  #picked li { color: var(--fg); }
   dialog {
     background: var(--card); color: var(--fg); border: 1px solid var(--line);
     border-radius: 10px; padding: 1.25rem 1.4rem; max-width: 26rem;

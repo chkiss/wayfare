@@ -46,10 +46,21 @@
 </div>
 {% endif %}
 
-<form class="card" method="post" action="/submit" enctype="multipart/form-data">
+<form class="card" method="post" action="/submit" enctype="multipart/form-data" id="submitform">
   <label for="upload">Screenshots, PDFs, boarding passes or saved emails</label>
-  <input id="upload" name="upload" type="file" multiple
-         accept="image/*,application/pdf,.eml,.txt,.ics">
+
+  {# The plain file input is the only thing that must work. Drag and paste are
+     added on top of it by script, so a browser without JS still submits. #}
+  <div id="dropzone">
+    <input id="upload" name="upload" type="file" multiple
+           accept="image/*,application/pdf,.eml,.txt,.ics">
+    <p class="reason dz-hint" hidden>
+      Drop files here, or press ⌘/Ctrl+V to paste a screenshot straight from
+      the clipboard.
+    </p>
+  </div>
+  <ul id="picked" class="issues" hidden></ul>
+
   <p class="reason">
     Send the whole trip at once. Outbound, return and hotel checked together
     catch the mistakes none of them shows on its own.
@@ -79,5 +90,117 @@
     {% endif %}
   {% endfor %}
 {% endfor %}
+
+<script>
+// Drag and paste, layered over the plain file input.
+//
+// A file input cannot be appended to, only replaced, so the chosen files are
+// held in a DataTransfer and written back to the input whenever they change.
+// That keeps one ordinary multipart form doing the submitting: no fetch, no
+// second code path on the server, and it still works if this script fails.
+(function () {
+  const form = document.getElementById("submitform");
+  const input = document.getElementById("upload");
+  const zone = document.getElementById("dropzone");
+  const list = document.getElementById("picked");
+  if (!form || !input || !window.DataTransfer) return;
+
+  const bag = new DataTransfer();
+  let writing = false;
+
+  document.querySelector(".dz-hint").hidden = false;
+
+  const describe = (bytes) =>
+    bytes > 1024 * 1024
+      ? (bytes / 1024 / 1024).toFixed(1) + " MB"
+      : Math.max(1, Math.round(bytes / 1024)) + " KB";
+
+  function sync() {
+    writing = true;
+    input.files = bag.files;
+    writing = false;
+
+    list.textContent = "";
+    list.hidden = bag.files.length === 0;
+    Array.from(bag.files).forEach((file, index) => {
+      const row = document.createElement("li");
+      row.textContent = file.name + " · " + describe(file.size) + " ";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "copy";
+      remove.textContent = "remove";
+      remove.onclick = () => {
+        const kept = Array.from(bag.files).filter((_, i) => i !== index);
+        bag.items.clear();
+        kept.forEach((f) => bag.items.add(f));
+        sync();
+      };
+      row.appendChild(remove);
+      list.appendChild(row);
+    });
+  }
+
+  function add(files) {
+    Array.from(files).forEach((file) => {
+      // Same name and size twice is a double drop, not two documents.
+      const already = Array.from(bag.files).some(
+        (f) => f.name === file.name && f.size === file.size
+      );
+      if (!already) bag.items.add(file);
+    });
+    sync();
+  }
+
+  // Picking files from the dialog adds to what is already there rather than
+  // replacing it, so a second trip document does not silently drop the first.
+  input.addEventListener("change", () => {
+    if (writing) return;
+    add(input.files);
+  });
+
+  // Dropped anywhere on the form, not only on the input: aiming at a 2rem
+  // strip is a needless bit of precision to demand.
+  ["dragenter", "dragover"].forEach((name) =>
+    form.addEventListener(name, (event) => {
+      event.preventDefault();
+      zone.classList.add("over");
+    })
+  );
+  ["dragleave", "drop"].forEach((name) =>
+    form.addEventListener(name, () => zone.classList.remove("over"))
+  );
+  form.addEventListener("drop", (event) => {
+    event.preventDefault();
+    add(event.dataTransfer.files);
+  });
+
+  // Missing the form drops the file into the browser, which navigates away
+  // from the page and loses anything already staged.
+  ["dragover", "drop"].forEach((name) =>
+    document.addEventListener(name, (event) => event.preventDefault())
+  );
+
+  // A pasted screenshot has no filename, so give it one that says where it
+  // came from and stays unique within a batch. Pasting text is untouched:
+  // a text clipboard carries no image files and falls through to the textarea.
+  document.addEventListener("paste", (event) => {
+    const images = Array.from(event.clipboardData.files).filter((f) =>
+      f.type.startsWith("image/")
+    );
+    if (!images.length) return;
+    event.preventDefault();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    add(
+      images.map((file, i) => {
+        const extension = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        const suffix = i ? "-" + (i + 1) : "";
+        return new File([file], `pasted-${stamp}${suffix}.${extension}`, {
+          type: file.type,
+        });
+      })
+    );
+  });
+})();
+</script>
 
 {% endblock %}

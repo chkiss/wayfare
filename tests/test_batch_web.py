@@ -120,6 +120,42 @@ def test_the_upload_field_accepts_more_than_one_file(client):
     assert "multiple" in client.get("/", headers=HTML).text
 
 
+def test_the_page_offers_drag_and_paste(client):
+    body = client.get("/", headers=HTML).text
+    assert 'id="dropzone"' in body
+    assert '"paste"' in body and '"drop"' in body
+
+
+def test_the_plain_input_survives_without_script(client):
+    """Drag and paste are layered on top; the form must submit without them."""
+    body = client.get("/", headers=HTML).text
+    start = body.rindex("<form", 0, body.index('id="submitform"'))
+    form = body[start : body.index("</form>", start)]
+    assert 'type="file"' in form and 'name="upload"' in form
+    assert 'enctype="multipart/form-data"' in form
+
+
+def test_a_pasted_screenshot_is_submitted_like_any_other_file(client):
+    """The clipboard has no filename, so the page invents one the server accepts."""
+    client.post("/submit", files=[upload("pasted-2026-03-04T09-35-00.png")], headers=HTML)
+    assert _record_commit.calls[-1][1] == "pasted-2026-03-04T09-35-00.png"
+
+
+def test_an_unreadable_file_does_not_take_the_batch_down(client):
+    """A truncated paste must not throw away the flights sent with it."""
+    response = client.post(
+        "/submit",
+        files=[upload("broken.png", b"not an image"), upload("outbound.txt")],
+        headers=HTML,
+    )
+    assert response.status_code == 200
+
+    itinerary = _record_commit.calls[-1][0]
+    codes = {issue.code for issue in itinerary.issues}
+    assert "ingest.unreadable" in codes
+    assert any("broken.png" in issue.message for issue in itinerary.issues)
+
+
 def test_finishing_setup_offers_the_way_back(client, monkeypatch):
     # A dict, exactly as calendar_api.connection_status returns. Faking it as
     # an object is what let a live AttributeError through a green suite.
