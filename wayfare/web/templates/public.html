@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} — wayfare{% endblock %}
+{% block body %}
+
+<h1>{{ heading }}</h1>
+<p class="sub">{{ standfirst }}</p>
+
+{% if page == "about" %}
+  <div class="card">
+    <p style="margin:0">
+      This is a private instance of <strong>wayfare</strong>, a tool that reads
+      travel booking documents — boarding passes, confirmation emails, hotel
+      reservations — and turns them into calendar events, after checking that
+      what it read is actually possible.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>What it does</strong>
+    <p class="reason">
+      Text is extracted from an uploaded document on this server. Airport
+      codes, timezones and distances are checked against an offline database,
+      so an impossible departure time or a hotel booked before the flight lands
+      is caught rather than written to a calendar. Events are created on a
+      quarantine calendar first; only those passing every check move to the
+      real one, and every write can be undone.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Who can use it</strong>
+    <p class="reason">
+      Only the person holding this instance's access token. There is no public
+      sign-up, and it acts on one Google account — the owner's.
+    </p>
+  </div>
+
+  <p class="sub" style="margin-top:2rem">
+    <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a>
+  </p>
+
+{% elif page == "privacy" %}
+  <div class="card">
+    <strong>The short version</strong>
+    <p class="reason">
+      This is a single-user, self-hosted instance. Your data stays on this
+      server and is shared with nobody. There is no analytics, no advertising,
+      no tracking, and nothing is sold or transferred to anyone.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Google user data this app accesses</strong>
+    <p class="reason">
+      With your permission it uses the Google Calendar API to:
+    </p>
+    <ul class="issues">
+      <li>create calendar events from the booking documents you give it;</li>
+      <li>
+        move an event from the quarantine calendar to your main calendar once
+        you approve it;
+      </li>
+      <li>
+        read events in the days surrounding a booking, solely to warn you that
+        a booking may already be on your calendar.
+      </li>
+    </ul>
+    <p class="reason">
+      It does not read your calendar for any other purpose, and it never
+      transmits your calendar data off this server.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>What is stored, and where</strong>
+    <ul class="issues">
+      <li>
+        <strong>The Google credential.</strong> A refresh token, stored on this
+        server with owner-only file permissions, so the app can act on your
+        calendar without asking you to sign in again.
+      </li>
+      <li>
+        <strong>Uploaded documents.</strong> Held in a temporary directory only
+        while being read, then deleted. The extracted text is not kept; a
+        one-way hash of it is, so a document submitted twice can be recognised.
+      </li>
+      <li>
+        <strong>A record of each submission.</strong> What was extracted, which
+        checks passed, and the identifiers of the events created — kept so you
+        can review and undo them.
+      </li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <strong>Third parties</strong>
+    <p class="reason">
+      When a document has no barcode and no embedded text, the extracted
+      <em>text</em> may be sent to the language model provider configured by
+      the instance owner, to work out which parts of it describe a flight. No
+      image, no calendar data and no credential is ever sent. If no model is
+      configured, this does not happen at all.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Withdrawing access</strong>
+    <p class="reason">
+      Revoke this app at any time from your Google account's
+      <a target="_blank" rel="noopener"
+         href="https://myaccount.google.com/permissions">third-party access</a>
+      page. To erase what is held here, delete the instance's state and secrets
+      directories on the server, or ask the owner to.
+    </p>
+  </div>
+
+{% elif page == "terms" %}
+  <div class="card">
+    <p style="margin:0">
+      This software is provided free of charge, as is, without warranty of any
+      kind, under the MIT licence. It is operated privately by its owner for
+      their own use.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>No guarantee of correctness</strong>
+    <p class="reason">
+      The tool checks what it reads and refuses what it cannot verify, but it
+      reads documents automatically and can be wrong. Do not rely on it as the
+      only record of a booking. Check any event that matters against the
+      original confirmation before travelling.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Liability</strong>
+    <p class="reason">
+      The authors and the operator accept no liability for missed travel,
+      incorrect calendar entries, or any other loss arising from use of this
+      software.
+    </p>
+  </div>
+{% endif %}
+
+<p class="sub" style="margin-top:2rem"><a href="/about">About wayfare</a></p>
+
+{% endblock %}

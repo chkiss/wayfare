@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "_records.html" import record_card %}
+{% block body %}
+
+<div class="between">
+  <div>
+    <h1>wayfare</h1>
+    <p class="sub">
+      Clean events go straight to <code>{{ calendar_id }}</code>.
+      Anything with a warning waits in <em>{{ pending_name }}</em>.
+      {% if not auto_promote %}Automatic promotion is currently off.{% endif %}
+    </p>
+  </div>
+  <form method="post" action="/logout"><button class="ghost" type="submit">Lock</button></form>
+</div>
+
+{% if needs_model or not ocr_ready %}
+<div class="card">
+  <strong>Not everything is set up yet</strong>
+  <ul class="issues">
+    {% if needs_model %}
+    <li class="warn">
+      No model backend. Boarding-pass barcodes and PDFs with a text layer still
+      work; a screenshot without a barcode will not.
+    </li>
+    {% endif %}
+    {% if not ocr_ready %}
+    <li class="warn">
+      OCR is not installed on this server, so images cannot be read at all.
+      Install <code>tesseract-ocr</code> and <code>zbar-tools</code>.
+    </li>
+    {% endif %}
+  </ul>
+  <div class="row" style="margin-top:.85rem">
+    <a href="/setup"><button type="button">Finish setup</button></a>
+  </div>
+</div>
+{% endif %}
+
+<form class="card" method="post" action="/submit" enctype="multipart/form-data">
+  <label for="upload">Screenshot, PDF, boarding pass or saved email</label>
+  <input id="upload" name="upload" type="file"
+         accept="image/*,application/pdf,.eml,.txt,.ics">
+  <p style="margin:1rem 0 .35rem"><label for="text">…or paste the confirmation text</label></p>
+  <textarea id="text" name="text" placeholder="Paste a booking confirmation here."></textarea>
+  <p class="row" style="margin-top:.85rem"><button type="submit">Read it</button></p>
+</form>
+
+<hr class="divider">
+
+<h2>Recent submissions</h2>
+{% if not submissions %}
+  <p class="sub">Nothing submitted yet.</p>
+{% endif %}
+{% for submission in submissions %}
+  <div class="between" style="margin:1.5rem 0 .5rem">
+    <strong>{{ submission.source_file }}</strong>
+    <span class="sub" style="margin:0">{{ submission.created }}</span>
+  </div>
+  {% for record in submission.records %}
+    {{ record_card(submission.submission_id, loop.index0, record) }}
+  {% endfor %}
+  {% for issue in submission.itinerary_issues %}
+    {% if issue.level in ["warn", "error"] %}
+      <ul class="issues"><li class="{{ issue.level }}">{{ issue.message }}</li></ul>
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+
+{% endblock %}

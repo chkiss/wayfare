@@ -1,0 +1,23 @@
+# Secrets and per-user state — NEVER commit
+secrets/
+*.json.secret
+client_secret*.json
+token*.json
+.env
+.env.*
+!.env.example
+
+# Runtime state: uploads, parsed itineraries, undo log
+var/
+data/airports.csv
+data/*.cache
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+build/
+dist/

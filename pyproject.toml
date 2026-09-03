@@ -1,0 +1,36 @@
+[project]
+name = "wayfare"
+version = "0.1.0"
+description = "Turn booking screenshots, PDFs and text snippets into validated travel calendar events."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+  "pydantic>=2.6",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "python-multipart>=0.0.9",
+  "jinja2>=3.1",
+  "httpx>=0.27",
+  "timezonefinder>=6.5",
+  "google-api-python-client>=2.120",
+  "google-auth-oauthlib>=1.2",
+  "google-auth-httplib2>=0.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+wayfare = "wayfare.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["wayfare*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

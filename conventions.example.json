@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Copy this somewhere outside the repo and point WAYFARE_CONVENTIONS at it.",
+    "These strings decide what your calendar entries look like; nothing here",
+    "is personal data, which is why the example is safe to commit."
+  ],
+
+  "title_prefix": "",
+
+  "_title_tokens": "{carrier_number} {carrier} {number} {origin} {destination} {origin_city} {destination_city}",
+  "flight_title": "{origin} → {destination_city} ({carrier} {number})",
+  "train_title": "{operator} {number} {origin} → {destination}",
+  "lodging_title": "{property_name}",
+  "other_title": "{title}",
+
+  "lodging_style": "span",
+  "lodging_checkin_title": "Check in — {property_name}",
+  "lodging_checkout_title": "Check out — {property_name}",
+
+  "include_confirmation": true,
+  "pending_color_id": "6",
+
+  "_reminders": [
+    "Minutes before the event. Two on a flight: the first is the cue to leave,",
+    "the second the cue that you should already be at the desk. [] uses the",
+    "calendar's own default. Google allows at most five, none over four weeks."
+  ],
+  "flight_reminders_minutes": [180, 45],
+  "train_reminders_minutes": [60, 15],
+  "lodging_reminders_minutes": [],
+  "other_reminders_minutes": []
+}

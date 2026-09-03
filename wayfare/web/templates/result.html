@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_records.html" import record_card %}
+{% block body %}
+
+<h1>Read {{ submission.source_file }}</h1>
+<p class="sub">
+  {{ submission.summary.promoted }} added to your calendar ·
+  {{ submission.summary.pending }} waiting for you ·
+  {{ submission.summary.rejected }} rejected
+</p>
+
+{% for record in submission.records %}
+  {{ record_card(submission.submission_id, loop.index0, record) }}
+{% endfor %}
+
+{% for issue in submission.itinerary_issues %}
+  {% if issue.level in ["warn", "error"] %}
+    <ul class="issues"><li class="{{ issue.level }}">{{ issue.message }}</li></ul>
+  {% endif %}
+{% endfor %}
+
+<p style="margin-top:2rem"><a href="/">← Back</a></p>
+{% endblock %}

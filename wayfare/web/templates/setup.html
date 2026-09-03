@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% macro copyable(value) %}
+<span class="copyable">
+  <code>{{ value }}</code>
+  <button class="copy" type="button" onclick="wfCopy(this)">copy</button>
+</span>
+{% endmacro %}
+
+{% macro redirect_block(uri, label="Authorised redirect URI") %}
+<p class="reason" style="margin-bottom:.35rem">{{ label }}:</p>
+<p style="margin:0 0 .6rem">{{ copyable(uri) }}</p>
+{% endmacro %}
+
+{% set proj = "?project=" ~ status.project_id if status.project_id else "" %}
+
+{% block body %}
+
+<div class="between">
+  <div>
+    <h1>Connect a calendar</h1>
+    <p class="sub">One-time setup, in Google Cloud Console.</p>
+  </div>
+  <a href="/"><button class="ghost" type="button">Back</button></a>
+</div>
+
+{% if message %}
+  <div class="card"><strong>{{ message }}</strong></div>
+{% endif %}
+
+{% if status.connected %}
+  <div class="card">
+    <div class="between">
+      <strong>Connected{% if status.account %} as {{ status.account }}{% endif %}</strong>
+      <span class="pill promoted">ready</span>
+    </div>
+    <p class="reason">Events go to <code>{{ calendar_id }}</code>.</p>
+    {{ redirect_block(redirect_uri, "This instance's redirect URI, if you need it again") }}
+    <div class="row" style="margin-top:.85rem">
+      <a href="/"><button type="button">Start using it</button></a>
+      <a href="/setup/connect"><button class="ghost" type="button">Reconnect</button></a>
+    </div>
+  </div>
+{% else %}
+
+  <form class="card" method="post" action="/setup/client" enctype="multipart/form-data">
+    <div class="between">
+      <strong>Step 1 — Create the OAuth client</strong>
+      <span class="pill {{ 'promoted' if status.client_uploaded else 'pending' }}">
+        {{ 'uploaded' if status.client_uploaded else 'to do' }}
+      </span>
+    </div>
+
+    <ol class="steps">
+      <li>Enable the Google Calendar API on any project.</li>
+      <li>On the credentials page, choose <em>Create credentials → OAuth client ID</em>.</li>
+      <li>If asked what data you are accessing, choose <strong>User data</strong>.</li>
+      <li>Application type: <strong>Web application</strong>.</li>
+      <li>Under <em>Authorised redirect URIs</em>, add the address below.</li>
+      <li>Create the client, download its JSON, and upload it here.</li>
+    </ol>
+
+    {{ redirect_block(redirect_uri) }}
+
+    <div class="row" style="margin-top:.85rem">
+      <a target="_blank" rel="noopener"
+         href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com{{ proj }}">
+        <button class="ghost" type="button">Enable the API</button>
+      </a>
+      <a target="_blank" rel="noopener"
+         href="https://console.cloud.google.com/apis/credentials{{ proj }}">
+        <button class="ghost" type="button">Create the client</button>
+      </a>
+    </div>
+
+    {% if status.client_kind == "installed" %}
+    <ul class="issues">
+      <li class="warn">
+        The uploaded file is a Desktop client. Create a Web application client
+        and upload that instead.
+      </li>
+    </ul>
+    {% endif %}
+
+    <p style="margin:1.2rem 0 .35rem"><label for="client_json">Client JSON</label></p>
+    <input id="client_json" type="file" name="client_json"
+           accept="application/json,.json" required>
+    <p class="reason">Stored on this server with owner-only permissions.</p>
+    <p class="row" style="margin-top:.85rem"><button type="submit">Upload</button></p>
+  </form>
+
+  {% if status.project_id %}
+  <div class="card">
+    <p class="reason" style="margin:0">
+      Steps 2 to 4 must be done in the project that owns this client,
+      <strong>{{ status.project_id }}</strong>. The buttons below open it
+      directly; if the console's project selector shows anything else, the
+      settings will be saved against the wrong project.
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <strong>Step 2 — Branding</strong>
+    <p class="reason">Fill in every field, including the three links below.</p>
+    <ol class="steps">
+      <li><strong>App name</strong> and <strong>user support email</strong>.</li>
+      <li><strong>Developer contact information</strong>, at the foot of the page.</li>
+      <li>The <strong>App domain</strong> links:</li>
+    </ol>
+    <table style="width:100%; border-collapse:collapse; font-size:.87rem; margin:.5rem 0">
+      <tr>
+        <td style="padding:.25rem .5rem .25rem 0; color:var(--muted)">Home page</td>
+        <td>{{ copyable(public_urls.about) }}</td>
+      </tr>
+      <tr>
+        <td style="padding:.25rem .5rem .25rem 0; color:var(--muted)">Privacy policy</td>
+        <td>{{ copyable(public_urls.privacy) }}</td>
+      </tr>
+      <tr>
+        <td style="padding:.25rem .5rem .25rem 0; color:var(--muted)">Terms of service</td>
+        <td>{{ copyable(public_urls.terms) }}</td>
+      </tr>
+    </table>
+    <div class="row" style="margin-top:.85rem">
+      <a target="_blank" rel="noopener"
+         href="https://console.cloud.google.com/auth/branding{{ proj }}">
+        <button class="ghost" type="button">Open branding</button>
+      </a>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>Step 3 — Data access</strong>
+    <p class="reason">
+      Add the scope this instance requests, then save. Consent fails if the
+      two do not match.
+    </p>
+    <p style="margin:.6rem 0">
+      {{ copyable(scope) }}
+    </p>
+    {% if scope_mode == "app" %}
+    <p class="reason">
+      This instance runs in app-calendar mode: not a sensitive scope, so no
+      unverified-app warning, but events land on a calendar wayfare creates
+      rather than your own, and it cannot see bookings already on your
+      calendar.
+    </p>
+    {% else %}
+    <p class="reason">
+      Sensitive scope, so Google shows an unverified-app warning at consent.
+      It is what lets events land on your own calendar and lets the duplicate
+      check see bookings that are already there. Set
+      <code>WAYFARE_SCOPE_MODE=app</code> to trade both away for a quieter
+      consent screen.
+    </p>
+    {% endif %}
+    <div class="row" style="margin-top:.85rem">
+      <a target="_blank" rel="noopener"
+         href="https://console.cloud.google.com/auth/scopes{{ proj }}">
+        <button class="ghost" type="button">Open data access</button>
+      </a>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>Step 4 — Publish</strong>
+    <p class="reason">
+      On the audience page, press <strong>Publish app</strong> and confirm.
+    </p>
+    <div class="row" style="margin-top:.85rem">
+      <a target="_blank" rel="noopener"
+         href="https://console.cloud.google.com/auth/audience{{ proj }}">
+        <button class="ghost" type="button">Open audience</button>
+      </a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="between">
+      <strong>Step 5 — Grant access</strong>
+      <span class="pill pending">to do</span>
+    </div>
+    <p class="reason">
+      Sign in and approve calendar access. Google shows an unverified-app
+      warning first; choose <em>Advanced</em>, then <em>Go to … (unsafe)</em>.
+    </p>
+    <div class="row" style="margin-top:.85rem">
+      {% if status.client_uploaded %}
+        <a href="/setup/connect"><button type="button">Connect Google Calendar</button></a>
+      {% else %}
+        <button type="button" disabled>Upload the client first</button>
+      {% endif %}
+    </div>
+  </div>
+
+{% endif %}
+
+<h2>Reading documents</h2>
+<p class="sub" style="margin-bottom:1rem">
+  Barcodes and PDFs with a text layer are read on this server alone. A
+  screenshot without a barcode needs a model to work out which numbers are the
+  flight. It only ever sees extracted text, never the image, so a free model
+  is enough.
+</p>
+
+<form class="card" method="post" action="/setup/model">
+  <div class="between">
+    <strong>Model backend</strong>
+    <span class="pill {{ 'promoted' if model.check and model.check.ok
+                          else ('rejected' if model.check else 'pending') }}">
+      {% if model.check %}{{ 'working' if model.check.ok else 'not working' }}
+      {% elif model.configured %}untested{% else %}not set{% endif %}
+    </span>
+  </div>
+  {% if model.configured %}
+  <p class="reason">Key {{ model.hint }} · {{ model.model }}</p>
+  {% endif %}
+  {% if model.check %}
+  <ul class="issues">
+    <li class="{{ '' if model.check.ok else 'warn' }}">
+      {{ model.check.detail }}
+      <span style="opacity:.6">— {{ model.check.checked }}</span>
+    </li>
+  </ul>
+  {% endif %}
+  <p class="reason">
+    Paste a free OpenRouter key. Stored with owner-only permissions and never
+    shown again.
+  </p>
+  <div class="row" style="margin-top:.85rem">
+    <a target="_blank" rel="noopener" href="https://openrouter.ai/settings/keys">
+      <button type="button">Get a free OpenRouter key</button>
+    </a>
+  </div>
+
+  <p style="margin:1rem 0 .35rem"><label for="api_key">API key</label></p>
+  <input id="api_key" type="password" name="api_key" autocomplete="off"
+         placeholder="{{ 'leave blank to keep the saved key' if model.configured else 'sk-or-v1-…' }}">
+
+  <p style="margin:1rem 0 .35rem"><label for="model">Model</label></p>
+  <input id="model" type="text" name="model" value="{{ model.model }}">
+  <p class="reason">
+    Saving tests the key. If a free model is withdrawn, name another here.
+  </p>
+
+  <p class="row" style="margin-top:.85rem">
+    <button type="submit">Save and test</button>
+  </p>
+</form>
+
+{% if not ocr_ready or not barcodes_ready %}
+<div class="card">
+  <div class="between">
+    <strong>Server packages</strong>
+    <span class="pill pending">missing</span>
+  </div>
+  <p class="reason">
+    These are installed on the server, not through this page, and they need
+    administrator access:
+  </p>
+  <p style="margin:.6rem 0">
+    {{ copyable("sudo apt install -y tesseract-ocr zbar-tools poppler-utils") }}
+  </p>
+  <ul class="issues">
+    {% if not ocr_ready %}
+    <li class="warn">tesseract is missing — images and scanned PDFs cannot be read.</li>
+    {% endif %}
+    {% if not barcodes_ready %}
+    <li class="warn">zbarimg is missing — boarding-pass barcodes cannot be decoded.</li>
+    {% endif %}
+  </ul>
+</div>
+{% endif %}
+
+{% if status.error %}
+  <ul class="issues"><li class="warn">{{ status.error }}</li></ul>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,62 @@
+{% macro record_card(submission_id, index, record) %}
+<div class="card">
+  <div class="between">
+    <strong>{{ record.summary }}</strong>
+    <span class="pill {{ record.status }}">{{ record.status }}</span>
+  </div>
+  <p class="reason">{{ record.reason }}</p>
+
+  {% set notable = record.issues | selectattr("level", "in", ["warn", "error"]) | list %}
+  {% if notable %}
+  <ul class="issues">
+    {% for issue in notable %}
+      <li class="{{ issue.level }}">{{ issue.message }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if record.status == "pending" %}
+  <div class="row" style="margin-top:.85rem">
+    <form method="post" action="/submissions/{{ submission_id }}/records/{{ index }}/promote">
+      <button type="submit">Add to calendar</button>
+    </form>
+    <form method="post" action="/submissions/{{ submission_id }}/records/{{ index }}/discard">
+      <button class="ghost" type="submit">Discard</button>
+    </form>
+    <button class="ghost" type="button"
+            onclick="this.closest('.card').querySelector('.fix').hidden ^= true">Fix it</button>
+  </div>
+
+  {# A held record often just needs a time typed in. Asking the user to go to
+     Google Calendar and come back would make the review screen pointless. #}
+  <form class="fix" hidden method="post" style="margin-top:.85rem"
+        action="/submissions/{{ submission_id }}/records/{{ index }}/amend">
+    <label for="s{{ submission_id }}{{ index }}">Title</label>
+    <input id="s{{ submission_id }}{{ index }}" type="text" name="summary"
+           value="{{ record.summary }}" style="width:100%">
+    <div class="row" style="margin-top:.6rem; align-items:flex-end">
+      <span style="flex:1 1 12rem">
+        <label for="a{{ submission_id }}{{ index }}">Starts</label>
+        <input id="a{{ submission_id }}{{ index }}" type="datetime-local" name="start"
+               style="width:100%">
+      </span>
+      <span style="flex:1 1 12rem">
+        <label for="b{{ submission_id }}{{ index }}">Ends</label>
+        <input id="b{{ submission_id }}{{ index }}" type="datetime-local" name="end"
+               style="width:100%">
+      </span>
+    </div>
+    <p class="reason" style="margin-top:.5rem">
+      Leave a time blank to keep it. The timezone already worked out for this
+      place is kept either way.
+    </p>
+    <div class="row" style="margin-top:.6rem">
+      <button type="submit">Save</button>
+      <button type="submit" name="then_promote" value="1" class="ghost">
+        Save and add to calendar
+      </button>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endmacro %}

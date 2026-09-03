@@ -1,0 +1,39 @@
+# systemd --user unit. Install with:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/wayfare.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now wayfare
+#
+# This needs no root, and survives reboot as long as lingering is enabled for
+# the user (loginctl enable-linger <user>).
+#
+# Binds to localhost only. Public access goes through the nginx TLS vhost, so
+# the app itself is never directly reachable from the internet.
+
+[Unit]
+Description=wayfare — booking documents to calendar events
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/programoj/wayfare
+Environment=WAYFARE_STATE_DIR=%h/.local/state/wayfare
+Environment=WAYFARE_SECRETS_DIR=%h/.config/wayfare/secrets
+Environment=WAYFARE_CONVENTIONS=%h/.config/wayfare/conventions.json
+# Public origin, used to build the OAuth redirect URI. Must match exactly what
+# is registered in the Google Cloud Console.
+Environment=WAYFARE_BASE_URL=https://wayfare.example.com
+ExecStart=%h/programoj/wayfare/.venv/bin/wayfare serve --host 127.0.0.1 --port 8791
+Restart=on-failure
+RestartSec=5
+
+# The service only ever needs its own state and secrets. The secrets
+# directory is writable because the OAuth flow stores the refresh token there
+# at runtime; everything else in the home directory stays read-only.
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/wayfare %h/.config/wayfare
+
+[Install]
+WantedBy=default.target

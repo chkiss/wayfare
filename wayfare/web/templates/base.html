@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}wayfare{% endblock %}</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf8; --fg: #1b1a18; --muted: #6b6862;
+    --line: #e2ded6; --card: #ffffff;
+    --ok: #1f7a4d; --warn: #9a6400; --bad: #a52d2d;
+    --accent: #2c5d8f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --fg: #e8e6e3; --muted: #9a968f;
+      --line: #32343a; --card: #1f2124;
+      --ok: #62c795; --warn: #e0ad4a; --bad: #e08080;
+      --accent: #7fb0e0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 52rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; }
+  .sub { color: var(--muted); margin: 0 0 2rem; font-size: .9rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem 1.15rem; margin-bottom: .85rem;
+  }
+  label { display: block; font-weight: 600; margin-bottom: .35rem; font-size: .9rem; }
+  input[type=file], input[type=password], textarea {
+    width: 100%; padding: .6rem .7rem; font: inherit;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px;
+  }
+  textarea { min-height: 8rem; resize: vertical; font-family: ui-monospace, monospace; font-size: .85rem; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    padding: .55rem 1.05rem; border-radius: 7px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  button.ghost { background: transparent; color: var(--fg); border-color: var(--line); }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .between { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .pill {
+    font-size: .72rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; padding: .18rem .5rem; border-radius: 99px;
+    border: 1px solid currentColor;
+  }
+  .pill.promoted { color: var(--ok); }
+  .pill.pending  { color: var(--warn); }
+  .pill.rejected, .pill.discarded { color: var(--bad); }
+  .issues { list-style: none; padding: 0; margin: .6rem 0 0; font-size: .87rem; }
+  .issues li { padding: .18rem 0 .18rem .95rem; position: relative; color: var(--muted); }
+  .issues li::before { content: "•"; position: absolute; left: 0; }
+  .issues li.warn { color: var(--warn); }
+  .issues li.error { color: var(--bad); }
+  .reason { color: var(--muted); font-size: .88rem; margin: .3rem 0 0; }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
+  ol.steps { margin: .6rem 0 0; padding-left: 1.3rem; font-size: .9rem; }
+  ol.steps li { margin: .3rem 0; }
+  ol.steps em { color: var(--muted); font-style: normal; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, monospace; font-size: .85em; }
+  /* A value you are meant to paste somewhere else, with its own copy button. */
+  .copyable { display: inline-flex; align-items: center; gap: .4rem; max-width: 100%; }
+  .copyable code { user-select: all; word-break: break-all; }
+  button.copy {
+    flex: none; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .12rem .45rem; border-radius: 5px; cursor: pointer;
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+  }
+  button.copy:hover { color: var(--fg); border-color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+{% block body %}{% endblock %}
+</main>
+<script>
+  // One handler for every copy button on the page.
+  function wfCopy(button) {
+    const value = button.parentElement.querySelector("code").textContent.trim();
+    const done = () => {
+      button.textContent = "copied";
+      setTimeout(() => { button.textContent = "copy"; }, 1200);
+    };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(value).then(done, () => { button.textContent = "select it"; });
+    } else {
+      // No clipboard API without HTTPS; select the text so one keystroke copies it.
+      getSelection().selectAllChildren(button.parentElement.querySelector("code"));
+      button.textContent = "press ⌘/Ctrl+C";
+    }
+  }
+</script>
+</body>
+</html>

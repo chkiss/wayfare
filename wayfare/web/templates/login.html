@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>wayfare</h1>
+<p class="sub">Booking documents in, checked calendar events out.</p>
+
+<form class="card" method="post" action="/login">
+  <input type="hidden" name="next" value="{{ next | default('/') }}">
+  <label for="token">Owner token</label>
+  <input id="token" name="token" type="password" autocomplete="current-password" autofocus>
+  {% if error %}<p class="reason" style="color:var(--bad)">{{ error }}</p>{% endif %}
+  <p class="row" style="margin-top:.85rem"><button type="submit">Unlock</button></p>
+</form>
+{% endblock %}
