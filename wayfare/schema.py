@@ -89,7 +89,14 @@ class Place(BaseModel):
     timezone: str | None = None
 
     def label(self) -> str:
-        for candidate in (self.iata, self.name, self.address):
+        """The shortest identification of this place that is actually known.
+
+        The city is in this chain because it is often the only part that
+        survives. A station's printed name may be unquotable and discarded
+        while the city it is in is not, and writing "→ ?" when the record
+        plainly says New York helps nobody.
+        """
+        for candidate in (self.iata, self.name, self.city, self.address):
             if candidate:
                 return candidate
         return "?"

@@ -81,8 +81,10 @@
     <strong>{{ submission.source_file }}</strong>
     <span class="sub" style="margin:0">{{ submission.created }}</span>
   </div>
+  {# record.index, not loop.index0: discarded records are filtered out of this
+     list, and the actions address a record by its position in the stored one. #}
   {% for record in submission.records %}
-    {{ record_card(submission.submission_id, loop.index0, record) }}
+    {{ record_card(submission.submission_id, record.index, record) }}
   {% endfor %}
   {% for issue in submission.itinerary_issues %}
     {% if issue.level in ["warn", "error"] %}

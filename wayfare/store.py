@@ -201,17 +201,41 @@ def load(submission_id: str) -> dict | None:
         return None
 
 
-def recent(limit: int = 25) -> list[dict]:
+def recent(limit: int = 25, include_discarded: bool = False) -> list[dict]:
+    """Recent submissions, without the records you have already dealt with.
+
+    Discarding is the answer to "this is wrong, take it away". Leaving the card
+    on screen afterwards means the review list only ever grows, and the one
+    thing the user asked for — for it to go — is the one thing that did not
+    happen. The record stays on disk either way, so nothing is lost.
+    """
     cfg = get_config()
     if not cfg.records_dir.exists():
         return []
     paths = sorted(cfg.records_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+
     out: list[dict] = []
-    for path in paths[:limit]:
+    for path in paths:
         try:
-            out.append(json.loads(path.read_text(encoding="utf-8")))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             continue
+
+        # The position in the stored list is what promote and discard address,
+        # so it has to survive any filtering of that list.
+        for position, record in enumerate(data.get("records", [])):
+            record["index"] = position
+
+        if not include_discarded:
+            data["records"] = [r for r in data.get("records", []) if r.get("status") != "discarded"]
+            # A submission whose every record was discarded has nothing left
+            # to show, and its heading alone would be a row of noise.
+            if not data["records"]:
+                continue
+
+        out.append(data)
+        if len(out) >= limit:
+            break
     return out
 
 
