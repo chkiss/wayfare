@@ -77,6 +77,13 @@
     background: transparent; color: var(--muted); border: 1px solid var(--line);
   }
   button.copy:hover { color: var(--fg); border-color: var(--muted); }
+  /* Square, so the gear sits as an icon rather than a very short word. */
+  button.icon { padding: .55rem .7rem; font-size: 1rem; line-height: 1; }
+  dialog {
+    background: var(--card); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1.25rem 1.4rem; max-width: 26rem;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .5); }
 </style>
 </head>
 <body>

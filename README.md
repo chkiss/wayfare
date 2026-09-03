@@ -151,9 +151,13 @@ lands in the pending calendar regardless of how clean it looks.
 
 ```sh
 curl -H "Authorization: Bearer $WAYFARE_AGENT_TOKEN" \
-     -F upload=@confirmation.png \
+     -F upload=@outbound.pdf -F upload=@return.pdf -F upload=@hotel.eml \
      https://wayfare.example.com/api/v1/ingest
 ```
+
+Repeat `upload` to send a whole trip at once. It is worth doing: a hotel booked
+for the wrong month looks fine on its own and only contradicts something when
+the flights are checked alongside it.
 
 The **owner token** can do everything, including promote and undo.
 

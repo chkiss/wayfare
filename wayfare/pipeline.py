@@ -160,7 +160,7 @@ def _same_journey(a: Record, b: Record) -> bool:
 
 def _is_placeholder_time(when: LocalTime | None) -> bool:
     """Midnight from a barcode means 'time not stated', not 'departs at 00:00'."""
-    return when is not None and when.local.time() == datetime.min.time()
+    return isinstance(when, LocalTime) and when.local.time() == datetime.min.time()
 
 
 def _merge_pair(primary: Record, secondary: Record, itinerary: Itinerary) -> Record:

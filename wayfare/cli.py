@@ -14,7 +14,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from . import store
+from . import batch, store
 from .airports import AIRPORTS_URL
 from .config import generate_token, get_config
 from .pipeline import process_file, process_text
@@ -56,14 +56,35 @@ def _print_submission(submission: dict) -> None:
 
 
 def _read_input(args) -> tuple:
+    """Read every input given and combine them into one itinerary.
+
+    Several paths are one *trip*, not several submissions: the cross-record
+    checks only see a hotel booked for the wrong month if the flights are in
+    front of them at the same time.
+    """
+    itineraries = []
+    sources = []
+
+    for raw in args.paths or []:
+        if raw == "-":
+            itineraries.append(process_text(sys.stdin.read(), "stdin"))
+            sources.append("stdin")
+            continue
+        path = Path(raw).expanduser()
+        if not path.exists():
+            raise SystemExit(f"No such file: {path}")
+        itineraries.append(process_file(path, path.name))
+        sources.append(path.name)
+
     if args.text:
-        return process_text(args.text, "pasted text"), "pasted text"
-    if args.path == "-":
-        return process_text(sys.stdin.read(), "stdin"), "stdin"
-    path = Path(args.path).expanduser()
-    if not path.exists():
-        raise SystemExit(f"No such file: {path}")
-    return process_file(path, path.name), path.name
+        itineraries.append(process_text(args.text, "pasted text"))
+        sources.append("pasted text")
+
+    if not itineraries:
+        itineraries.append(process_text(sys.stdin.read(), "stdin"))
+        sources.append("stdin")
+
+    return batch.combine(itineraries), batch.describe(sources)
 
 
 def cmd_parse(args) -> int:
@@ -190,8 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_input_args(p):
-        p.add_argument("path", nargs="?", default="-", help="File to read, or '-' for stdin")
-        p.add_argument("--text", help="Parse this string instead of a file")
+        p.add_argument(
+            "paths",
+            nargs="*",
+            help="Files to read, or '-' for stdin. Give a whole trip at once — "
+            "outbound, return and hotel are checked against each other.",
+        )
+        p.add_argument("--text", help="Parse this string as well as any files")
         p.add_argument("--json", action="store_true", help="Machine-readable output")
 
     p = sub.add_parser("parse", help="Read a document and print the verdict, writing nothing")

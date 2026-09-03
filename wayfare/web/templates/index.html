@@ -11,7 +11,16 @@
       {% if not auto_promote %}Automatic promotion is currently off.{% endif %}
     </p>
   </div>
-  <form method="post" action="/logout"><button class="ghost" type="submit">Lock</button></form>
+  <div class="row">
+    <a href="/setup" title="Setup" aria-label="Setup">
+      <button class="ghost icon" type="button">⚙</button>
+    </a>
+    <form method="post" action="/logout">
+      <button class="ghost" type="submit" title="Forget the owner token on this device">
+        Sign out
+      </button>
+    </form>
+  </div>
 </div>
 
 {% if needs_model or not ocr_ready %}
@@ -38,10 +47,14 @@
 {% endif %}
 
 <form class="card" method="post" action="/submit" enctype="multipart/form-data">
-  <label for="upload">Screenshot, PDF, boarding pass or saved email</label>
-  <input id="upload" name="upload" type="file"
+  <label for="upload">Screenshots, PDFs, boarding passes or saved emails</label>
+  <input id="upload" name="upload" type="file" multiple
          accept="image/*,application/pdf,.eml,.txt,.ics">
-  <p style="margin:1rem 0 .35rem"><label for="text">…or paste the confirmation text</label></p>
+  <p class="reason">
+    Send the whole trip at once. Outbound, return and hotel checked together
+    catch the mistakes none of them shows on its own.
+  </p>
+  <p style="margin:1rem 0 .35rem"><label for="text">…and/or paste the confirmation text</label></p>
   <textarea id="text" name="text" placeholder="Paste a booking confirmation here."></textarea>
   <p class="row" style="margin-top:.85rem"><button type="submit">Read it</button></p>
 </form>

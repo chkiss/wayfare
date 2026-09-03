@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .. import store
+from .. import batch, store
 from ..calendar_api import (
     CalendarClient,
     CalendarError,
@@ -257,7 +257,7 @@ def logout():
 async def submit_form(
     request: Request,
     scope: Scope = Depends(require_owner),
-    upload: UploadFile | None = File(None),
+    upload: list[UploadFile] = File(default_factory=list),
     text: str = Form(""),
 ):
     try:
@@ -327,12 +327,22 @@ def _redirect_uri(request: Request) -> str:
 
 
 @app.get("/setup", response_class=HTMLResponse)
-def setup_page(request: Request, scope: Scope = Depends(require_owner), message: str = ""):
+def setup_page(
+    request: Request,
+    scope: Scope = Depends(require_owner),
+    message: str = "",
+    done: str = "",
+):
+    status = connection_status()
     return TEMPLATES.TemplateResponse(
         request,
         "setup.html",
         {
-            "status": connection_status(),
+            "status": status,
+            # Only after a setup step that just succeeded, never on every visit:
+            # someone who came back to change a setting does not need a modal
+            # telling them they are finished.
+            "just_finished": bool(done) and status.connected,
             "model": llm_extractor.status(),
             "ocr_ready": ocr_available(),
             "barcodes_ready": barcode_extractor.available(),
@@ -395,7 +405,7 @@ def setup_model(
     # is live for this check without restarting anything.
     ok, detail = llm_extractor.verify()
     llm_extractor.record_check(ok, detail)
-    return RedirectResponse("/setup", status_code=303)
+    return RedirectResponse("/setup?done=1", status_code=303)
 
 
 @app.get("/setup/connect")
@@ -455,7 +465,7 @@ def oauth_callback(request: Request, scope: Scope = Depends(require_owner)):
         return RedirectResponse(f"/setup?message={quote(str(exc))}", status_code=303)
 
     response = RedirectResponse(
-        "/setup?message=" + quote("Calendar connected."), status_code=303
+        "/setup?done=1&message=" + quote("Calendar connected."), status_code=303
     )
     response.delete_cookie("wayfare_oauth_state")
     response.delete_cookie("wayfare_oauth_verifier")
@@ -474,10 +484,14 @@ def healthz():
 @app.post("/api/v1/ingest")
 async def api_ingest(
     scope: Scope = Depends(require_any),
-    upload: UploadFile | None = File(None),
+    upload: list[UploadFile] = File(default_factory=list),
     text: str = Form(""),
 ):
-    """Submit a document or a text snippet.
+    """Submit one or more documents, a text snippet, or both.
+
+    Repeating the ``upload`` field sends a whole trip at once, which is the
+    only way the cross-record checks can see an outbound, a return and a hotel
+    together.
 
     An agent token always submits with promotion disabled, so everything it
     sends lands in the pending calendar regardless of how clean it looks.
@@ -527,29 +541,42 @@ def api_undo(count: int = 1, scope: Scope = Depends(require_owner)):
 # --- shared --------------------------------------------------------------
 
 
-async def _run_submission(upload: UploadFile | None, text: str, allow_promote: bool):
-    """Ingest whichever of the two inputs was supplied, then commit."""
-    if upload is not None and upload.filename:
+async def _run_submission(uploads, text: str, allow_promote: bool):
+    """Ingest every input given, combine them into one trip, then commit.
+
+    Files and pasted text are not alternatives. A round trip is normally two
+    files, and a booking whose hotel came by email and whose flights came as
+    boarding passes is three — the checks that pay for this tool only work if
+    they arrive as one itinerary.
+    """
+    if isinstance(uploads, UploadFile) or uploads is None:
+        uploads = [uploads] if uploads is not None else []
+    files = [f for f in uploads if f is not None and f.filename]
+
+    itineraries = []
+    sources = []
+
+    for upload in files:
         payload = await upload.read()
         if len(payload) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="File too large.")
+            raise HTTPException(status_code=413, detail=f"'{upload.filename}' is too large.")
 
         with tempfile.TemporaryDirectory(prefix="wayfare-upload-") as tmp:
             path = Path(tmp) / Path(upload.filename).name
             path.write_bytes(payload)
-            itinerary = process_file(
-                path, upload.filename, existing_events=_calendar_context_safe(None)
-            )
-            source = upload.filename
-            itinerary = _recheck_with_calendar(itinerary)
-    elif text.strip():
-        itinerary = process_text(text, "pasted text")
-        itinerary = _recheck_with_calendar(itinerary)
-        source = "pasted text"
-    else:
-        raise HTTPException(status_code=400, detail="Send either a file or some text.")
+            itineraries.append(process_file(path, upload.filename))
+        sources.append(upload.filename)
 
-    return store.commit(itinerary, source, allow_promote=allow_promote)
+    if text.strip():
+        itineraries.append(process_text(text, "pasted text"))
+        sources.append("pasted text")
+
+    if not itineraries:
+        raise HTTPException(status_code=400, detail="Send at least one file, or some text.")
+
+    itinerary = batch.combine(itineraries, existing_events=[])
+    itinerary = _recheck_with_calendar(itinerary)
+    return store.commit(itinerary, batch.describe(sources), allow_promote=allow_promote)
 
 
 def _calendar_context_safe(records) -> list:

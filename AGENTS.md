@@ -27,9 +27,25 @@ curl -sS -X POST https://wayfare.example.com/api/v1/ingest \
   --form-string text="$BOOKING_TEXT"
 ```
 
-One document per request. If you have a five-page itinerary PDF, send the PDF
-rather than five screenshots of it: the extractor reads a text layer far more
-accurately than it reads pixels.
+A whole trip in one request, by repeating `upload`:
+
+```sh
+curl -sS -X POST https://wayfare.example.com/api/v1/ingest \
+  -H "Authorization: Bearer $WAYFARE_AGENT_TOKEN" \
+  -F upload=@outbound.pdf -F upload=@return.pdf -F upload=@hotel.eml
+```
+
+Send everything belonging to one trip together. The checks that catch real
+mistakes are the ones comparing documents — a hotel booked for the wrong month
+looks perfectly consistent on its own, and only contradicts something once the
+flights are in front of it. Splitting a round trip across two requests loses
+that. `upload` and `text` can both appear in the same request.
+
+Separate trips go in separate requests.
+
+If you have a five-page itinerary PDF, send the PDF rather than five
+screenshots of it: the extractor reads a text layer far more accurately than
+it reads pixels.
 
 ## Reading the result
 

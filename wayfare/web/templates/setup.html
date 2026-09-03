@@ -28,6 +28,25 @@
   <div class="card"><strong>{{ message }}</strong></div>
 {% endif %}
 
+{% if just_finished %}
+{# Setup ends on a Google redirect back to this page, which is the one moment
+   the user has no idea whether anything worked. Say so, and hand them the
+   way out, rather than leaving them on a settings screen. #}
+<dialog id="finished">
+  <h2 style="margin-top:0">Setup is done</h2>
+  <p class="reason">
+    wayfare can write to <code>{{ calendar_id }}</code>{% if status.account %}
+    as {{ status.account }}{% endif %}. Send it a booking and it will read it.
+  </p>
+  <div class="row" style="margin-top:1rem">
+    <a href="/"><button type="button">Back to wayfare</button></a>
+    <button class="ghost" type="button"
+            onclick="document.getElementById('finished').close()">Stay here</button>
+  </div>
+</dialog>
+<script>document.getElementById("finished").showModal();</script>
+{% endif %}
+
 {% if status.connected %}
   <div class="card">
     <div class="between">
