@@ -9,6 +9,7 @@ with no database to run.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -92,6 +93,19 @@ def decide(record: Record, allow_promote: bool = True) -> tuple[str, str]:
     return "promoted", f"All checks passed (confidence {confidence:.0%})."
 
 
+def _terse(exc: Exception) -> str:
+    """A provider error reduced to the sentence a person can act on.
+
+    A googleapiclient HttpError stringifies to the full request URL and a JSON
+    error body; the useful part is the message inside it.
+    """
+    text = str(exc)
+    match = re.search(r'returned "([^"]+)"', text)
+    if match:
+        return match.group(1)
+    return text[:160]
+
+
 def commit(
     itinerary: Itinerary,
     source_file: str,
@@ -113,6 +127,14 @@ def commit(
 
     client = client or (None if dry_run else CalendarClient())
 
+    # A record whose own zone could not be resolved is written in the
+    # calendar's zone rather than the server's, which is a fact about where the
+    # box is hosted and nothing to do with the person reading the event.
+    if client is not None and not conventions.get("default_timezone"):
+        zone = getattr(client, "calendar_timezone", lambda: None)()
+        if zone:
+            conventions["default_timezone"] = zone
+
     for record in itinerary.records:
         status, reason = decide(record, allow_promote)
         outcome = RecordOutcome(
@@ -124,15 +146,30 @@ def commit(
         )
 
         if status != "rejected" and not dry_run and client is not None:
-            pending_id = client.pending_calendar_id()
-            for body in to_google_events(record, conventions):
-                event = client.create(
-                    body, pending_id, colour_id=conventions.get("pending_color_id")
+            try:
+                pending_id = client.pending_calendar_id()
+                for body in to_google_events(record, conventions):
+                    event = client.create(
+                        body, pending_id, colour_id=conventions.get("pending_color_id")
+                    )
+                    event_id = event["id"]
+                    if status == "promoted":
+                        client.move(event_id, pending_id, client.target_calendar_id())
+                    outcome.event_ids.append(event_id)
+            except Exception as exc:  # noqa: BLE001 - one record's write, not the batch's
+                # A submission is a whole trip. One record Google will not
+                # accept must not discard the legs either side of it, and the
+                # user has to be told which one failed and why.
+                outcome.status = "rejected"
+                outcome.reason = f"Google rejected this event: {_terse(exc)}"
+                outcome.issues.append(
+                    {
+                        "level": "error",
+                        "code": "calendar.write_failed",
+                        "message": outcome.reason,
+                        "source": "store",
+                    }
                 )
-                event_id = event["id"]
-                if status == "promoted":
-                    client.move(event_id, pending_id, client.target_calendar_id())
-                outcome.event_ids.append(event_id)
 
         submission.outcomes.append(outcome)
 

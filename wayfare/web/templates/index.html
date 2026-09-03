@@ -59,7 +59,7 @@
       the clipboard.
     </p>
   </div>
-  <ul id="picked" class="issues" hidden></ul>
+  <div id="picked" class="tiles" hidden></div>
 
   <p class="reason">
     Send the whole trip at once. Outbound, return and hotel checked together
@@ -92,71 +92,167 @@
 {% endfor %}
 
 <script>
-// Drag and paste, layered over the plain file input.
+// Staged uploads: each file transfers as soon as it is chosen.
 //
-// A file input cannot be appended to, only replaced, so the chosen files are
-// held in a DataTransfer and written back to the input whenever they change.
-// That keeps one ordinary multipart form doing the submitting: no fetch, no
-// second code path on the server, and it still works if this script fails.
+// Reading a trip is slow — OCR on several images, then a model call — and none
+// of it starts until the last byte arrives. Uploading during the time the user
+// spends choosing means pressing "Read it" costs only the reading.
+//
+// The plain multipart input underneath still works if this script never runs,
+// so /submit accepts both a staged batch and ordinary form files.
 (function () {
   const form = document.getElementById("submitform");
   const input = document.getElementById("upload");
   const zone = document.getElementById("dropzone");
-  const list = document.getElementById("picked");
-  if (!form || !input || !window.DataTransfer) return;
+  const tiles = document.getElementById("picked");
+  const submit = form && form.querySelector("button[type=submit]");
+  if (!form || !input || !window.FormData) return;
 
-  const bag = new DataTransfer();
-  let writing = false;
-
+  // Staged, so the browser must not also post the input's own copy.
+  input.removeAttribute("name");
   document.querySelector(".dz-hint").hidden = false;
+
+  const items = [];
+  const RING = 2 * Math.PI * 9; // r=9 in the SVG below.
 
   const describe = (bytes) =>
     bytes > 1024 * 1024
       ? (bytes / 1024 / 1024).toFixed(1) + " MB"
       : Math.max(1, Math.round(bytes / 1024)) + " KB";
 
-  function sync() {
-    writing = true;
-    input.files = bag.files;
-    writing = false;
+  function ready() {
+    // Nothing to read, or something still in flight.
+    const staged = items.filter((i) => i.id);
+    const busy = items.some((i) => !i.id && !i.failed);
+    submit.disabled = busy || (!staged.length && !document.getElementById("text").value.trim());
+    submit.textContent = busy ? "Uploading…" : "Read it";
 
-    list.textContent = "";
-    list.hidden = bag.files.length === 0;
-    Array.from(bag.files).forEach((file, index) => {
-      const row = document.createElement("li");
-      row.textContent = file.name + " · " + describe(file.size) + " ";
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "copy";
-      remove.textContent = "remove";
-      remove.onclick = () => {
-        const kept = Array.from(bag.files).filter((_, i) => i !== index);
-        bag.items.clear();
-        kept.forEach((f) => bag.items.add(f));
-        sync();
-      };
-      row.appendChild(remove);
-      list.appendChild(row);
+    form.querySelectorAll("input[name=staged]").forEach((el) => el.remove());
+    staged.forEach((item) => {
+      const field = document.createElement("input");
+      field.type = "hidden";
+      field.name = "staged";
+      field.value = item.id;
+      form.appendChild(field);
     });
+  }
+
+  function tile(item) {
+    const box = document.createElement("figure");
+    box.className = "tile";
+
+    // The preview comes from the local File, so it costs no round trip and
+    // appears the instant the file is chosen rather than when it finishes.
+    if (item.file.type.startsWith("image/")) {
+      const image = document.createElement("img");
+      image.src = URL.createObjectURL(item.file);
+      image.alt = "";
+      image.onload = () => URL.revokeObjectURL(image.src);
+      box.appendChild(image);
+    } else {
+      const glyph = document.createElement("span");
+      glyph.className = "glyph";
+      glyph.textContent = item.file.name.toLowerCase().endsWith(".pdf") ? "PDF" : "TXT";
+      box.appendChild(glyph);
+    }
+
+    const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    ring.setAttribute("class", "ring");
+    ring.setAttribute("viewBox", "0 0 24 24");
+    ring.innerHTML =
+      '<circle class="track" cx="12" cy="12" r="9"></circle>' +
+      '<circle class="bar" cx="12" cy="12" r="9"></circle>';
+    const bar = ring.querySelector(".bar");
+    bar.style.strokeDasharray = RING;
+    bar.style.strokeDashoffset = RING;
+    box.appendChild(ring);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "x";
+    remove.title = "Remove from this batch";
+    remove.setAttribute("aria-label", "Remove " + item.file.name);
+    remove.textContent = "×";
+    remove.onclick = () => {
+      if (item.request) item.request.abort();
+      if (item.id) {
+        fetch("/uploads/" + encodeURIComponent(item.id), { method: "DELETE" }).catch(() => {});
+      }
+      items.splice(items.indexOf(item), 1);
+      box.remove();
+      tiles.hidden = items.length === 0;
+      ready();
+    };
+    box.appendChild(remove);
+
+    const caption = document.createElement("figcaption");
+    caption.textContent = item.file.name;
+    caption.title = item.file.name + " · " + describe(item.file.size);
+    box.appendChild(caption);
+
+    item.box = box;
+    item.progress = (fraction) => {
+      bar.style.strokeDashoffset = RING * (1 - fraction);
+    };
+    tiles.appendChild(box);
+    tiles.hidden = false;
+  }
+
+  function send(item) {
+    const body = new FormData();
+    body.append("upload", item.file, item.file.name);
+
+    const request = new XMLHttpRequest();
+    item.request = request;
+    request.open("POST", "/uploads");
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) item.progress(event.loaded / event.total);
+    };
+    request.onload = () => {
+      item.request = null;
+      if (request.status >= 200 && request.status < 300) {
+        item.id = JSON.parse(request.responseText).id;
+        item.progress(1);
+        item.box.classList.add("done");
+      } else {
+        fail(item, request.status === 413 ? "too large" : "upload failed");
+      }
+      ready();
+    };
+    request.onerror = () => {
+      item.request = null;
+      fail(item, "upload failed");
+      ready();
+    };
+    request.send(body);
+  }
+
+  function fail(item, why) {
+    item.failed = true;
+    item.box.classList.add("failed");
+    item.box.querySelector("figcaption").textContent = item.file.name + " — " + why;
   }
 
   function add(files) {
     Array.from(files).forEach((file) => {
       // Same name and size twice is a double drop, not two documents.
-      const already = Array.from(bag.files).some(
-        (f) => f.name === file.name && f.size === file.size
-      );
-      if (!already) bag.items.add(file);
+      if (items.some((i) => i.file.name === file.name && i.file.size === file.size)) return;
+      const item = { file: file, id: null, failed: false };
+      items.push(item);
+      tile(item);
+      send(item);
     });
-    sync();
+    ready();
   }
 
   // Picking files from the dialog adds to what is already there rather than
   // replacing it, so a second trip document does not silently drop the first.
   input.addEventListener("change", () => {
-    if (writing) return;
     add(input.files);
+    input.value = "";
   });
+
+  document.getElementById("text").addEventListener("input", ready);
 
   // Dropped anywhere on the form, not only on the input: aiming at a 2rem
   // strip is a needless bit of precision to demand.
@@ -200,6 +296,8 @@
       })
     );
   });
+
+  ready();
 })();
 </script>
 

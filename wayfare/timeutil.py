@@ -2,10 +2,38 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .schema import LocalTime
+
+
+def host_timezone() -> str:
+    """The machine's own IANA zone, or UTC if it cannot be established.
+
+    Only ever used as a last resort for a record whose real zone could not be
+    resolved. Deliberately reads the system configuration rather than deriving
+    a name from the current offset, which cannot distinguish zones that share
+    one and gets it wrong twice a year.
+    """
+    name = os.environ.get("TZ", "").strip()
+    if name:
+        return name
+
+    try:
+        link = Path("/etc/localtime").resolve()
+        parts = link.parts
+        if "zoneinfo" in parts:
+            return "/".join(parts[parts.index("zoneinfo") + 1 :]) or "UTC"
+    except OSError:
+        pass
+
+    try:
+        return Path("/etc/timezone").read_text(encoding="utf-8").strip() or "UTC"
+    except OSError:
+        return "UTC"
 
 
 def to_utc(when: LocalTime | None) -> datetime | None:

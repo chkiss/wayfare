@@ -78,6 +78,20 @@ def load_conventions() -> dict[str, Any]:
     return conventions
 
 
+def fallback_timezone(conventions: dict[str, Any] | None = None) -> str:
+    """The zone to write when a record's own zone could not be resolved.
+
+    Google rejects a naive dateTime outright, so "unknown" cannot be sent as
+    such — the choice is between some zone and no event at all. The record
+    still carries its "no timezone" warning, so it is held for review either
+    way; this only decides what the held event looks like on the calendar.
+    """
+    from .config import get_config
+
+    c = conventions if conventions is not None else load_conventions()
+    return c.get("default_timezone") or get_config().timezone
+
+
 def start_local(record) -> LocalTime | None:
     for name in ("departure", "check_in", "start"):
         value = getattr(record, name, None)
@@ -233,6 +247,7 @@ def event_description(record, conventions: dict[str, Any] | None = None) -> str:
 def to_google_events(record, conventions: dict[str, Any] | None = None) -> list[dict]:
     """Render one record as one or more Google Calendar event bodies."""
     c = conventions or load_conventions()
+    fallback = fallback_timezone(c)
 
     reminders = event_reminders(record, c)
 
@@ -244,16 +259,16 @@ def to_google_events(record, conventions: dict[str, Any] | None = None) -> list[
             {
                 "summary": f"{c.get('title_prefix', '')}"
                 + c["lodging_checkin_title"].format(property_name=name),
-                "start": record.check_in.to_google(),
-                "end": record.check_in.to_google(),
+                "start": record.check_in.to_google(fallback),
+                "end": record.check_in.to_google(fallback),
                 "location": location,
                 "description": description,
             },
             {
                 "summary": f"{c.get('title_prefix', '')}"
                 + c["lodging_checkout_title"].format(property_name=name),
-                "start": record.check_out.to_google(),
-                "end": record.check_out.to_google(),
+                "start": record.check_out.to_google(fallback),
+                "end": record.check_out.to_google(fallback),
                 "location": location,
                 "description": description,
             },
@@ -270,8 +285,8 @@ def to_google_events(record, conventions: dict[str, Any] | None = None) -> list[
 
     body = {
         "summary": event_summary(record, c),
-        "start": start.to_google(),
-        "end": end.to_google(),
+        "start": start.to_google(fallback),
+        "end": end.to_google(fallback),
         "description": event_description(record, c),
     }
     location = event_location(record)

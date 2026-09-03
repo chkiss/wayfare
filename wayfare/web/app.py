@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .. import batch, store
+from .. import batch, staging, store
 from ..calendar_api import (
     CalendarClient,
     CalendarError,
@@ -254,23 +254,87 @@ def logout():
     return response
 
 
+# --- staged uploads ------------------------------------------------------
+#
+# The transfer happens as each file is chosen, so pressing Read it costs only
+# the reading. The plain multipart form still works untouched when the script
+# does not run, which is why /submit accepts both.
+
+
+def _staging_session(request: Request) -> str:
+    return request.cookies.get("wayfare_batch") or ""
+
+
+@app.post("/uploads")
+async def stage_upload(
+    request: Request,
+    scope: Scope = Depends(require_owner),
+    upload: UploadFile = File(...),
+):
+    """Hold one file until the batch is submitted."""
+    payload = await upload.read()
+    if len(payload) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"'{upload.filename}' is too large.")
+
+    session = _staging_session(request) or staging.new_session()
+    try:
+        item = staging.add(session, upload.filename or "document", payload)
+    except ValueError:
+        # A malformed cookie, not a malformed request: start a fresh session
+        # rather than making the user clear their cookies.
+        session = staging.new_session()
+        item = staging.add(session, upload.filename or "document", payload)
+
+    response = JSONResponse({"id": item.file_id, "name": item.name, "size": item.size})
+    response.set_cookie(
+        "wayfare_batch", session, httponly=True, samesite="lax", secure=_is_https(request)
+    )
+    return response
+
+
+@app.delete("/uploads/{file_id}")
+def unstage_upload(
+    request: Request, file_id: str, scope: Scope = Depends(require_owner)
+):
+    """Take a file back out of the batch before it is submitted."""
+    try:
+        staging.remove(_staging_session(request), file_id)
+    except ValueError:
+        pass
+    return JSONResponse({"removed": True})
+
+
 @app.post("/submit", response_class=HTMLResponse)
 async def submit_form(
     request: Request,
     scope: Scope = Depends(require_owner),
     upload: list[UploadFile] = File(default_factory=list),
+    staged: list[str] = Form(default_factory=list),
     text: str = Form(""),
 ):
+    session = _staging_session(request)
     try:
-        submission = await _run_submission(upload, text, allow_promote=True)
+        held = staging.collect(session, staged) if session and staged else []
+    except ValueError:
+        held = []
+
+    try:
+        submission = await _run_submission(upload, text, allow_promote=True, staged=held)
     except HTTPException:
         raise
     except NotAuthorised as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return TEMPLATES.TemplateResponse(
+    # The batch has been read; keeping the bytes would only mean the next one
+    # starts with the last trip still attached.
+    if session:
+        staging.clear(session)
+
+    response = TEMPLATES.TemplateResponse(
         request, "result.html", {"submission": submission.to_dict()}
     )
+    response.delete_cookie("wayfare_batch")
+    return response
 
 
 @app.post("/submissions/{submission_id}/records/{index}/{action}")
@@ -310,6 +374,11 @@ def review_action(
 # pages that matter, shows the exact redirect URI to paste, takes the
 # downloaded JSON as an upload, and runs the consent flow. Nobody has to know
 # where the secrets directory is.
+
+
+def _is_https(request: Request) -> bool:
+    """Whether the browser reached us over TLS, as nginx saw it."""
+    return _origin(request).startswith("https://")
 
 
 def _origin(request: Request) -> str:
@@ -563,7 +632,7 @@ def _read_one(path: Path, name: str):
         return failed
 
 
-async def _run_submission(uploads, text: str, allow_promote: bool):
+async def _run_submission(uploads, text: str, allow_promote: bool, staged: list | None = None):
     """Ingest every input given, combine them into one trip, then commit.
 
     Files and pasted text are not alternatives. A round trip is normally two
@@ -577,6 +646,11 @@ async def _run_submission(uploads, text: str, allow_promote: bool):
 
     itineraries = []
     sources = []
+
+    # Files already uploaded one at a time while the user was still choosing.
+    for item in staged or []:
+        itineraries.append(_read_one(item.path, item.name))
+        sources.append(item.name)
 
     for upload in files:
         payload = await upload.read()

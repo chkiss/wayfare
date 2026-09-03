@@ -57,10 +57,19 @@ class LocalTime(BaseModel):
     #: IANA zone, e.g. "Europe/Brussels". Resolved from the place when known.
     timezone: str | None = None
 
-    def to_google(self) -> dict:
+    def to_google(self, fallback: str | None = None) -> dict:
+        """Google's event time payload.
+
+        A naive dateTime with no timeZone is rejected outright ("Missing time
+        zone definition for start time"), so an unresolved zone has to become
+        *some* zone at the point of writing. The record keeps its "no timezone"
+        warning either way, which is what holds it back for review — the
+        fallback makes it writable, not trusted.
+        """
         payload = {"dateTime": self.local.isoformat(timespec="seconds")}
-        if self.timezone:
-            payload["timeZone"] = self.timezone
+        zone = self.timezone or fallback
+        if zone:
+            payload["timeZone"] = zone
         return payload
 
 

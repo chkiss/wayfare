@@ -91,8 +91,46 @@
   }
   #dropzone.over { border-color: var(--accent); background: rgba(127, 176, 224, .08); }
   #dropzone .dz-hint { margin: .4rem 0 0; }
-  #picked { margin: .6rem 0 0; }
-  #picked li { color: var(--fg); }
+
+  /* Staged files: a thumbnail each, a progress ring while it uploads, and an
+     x to take it back out of the batch. */
+  .tiles { display: flex; flex-wrap: wrap; gap: .6rem; margin: .8rem 0 0; }
+  .tile {
+    position: relative; margin: 0; width: 5.5rem;
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+    background: var(--bg);
+  }
+  .tile img { display: block; width: 100%; height: 4.2rem; object-fit: cover; }
+  .tile .glyph {
+    display: flex; align-items: center; justify-content: center;
+    height: 4.2rem; font-size: .75rem; font-weight: 700; color: var(--muted);
+    letter-spacing: .05em;
+  }
+  .tile figcaption {
+    font-size: .68rem; color: var(--muted); padding: .25rem .35rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tile.failed { border-color: var(--bad); }
+  .tile.failed figcaption { color: var(--bad); }
+  /* The x sits on the image, so it needs to read against any photograph. */
+  .tile .x {
+    position: absolute; top: .2rem; right: .2rem; width: 1.15rem; height: 1.15rem;
+    padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+    background: rgba(0, 0, 0, .62); color: #fff;
+    font-size: .85rem; line-height: 1.15rem; font-weight: 700;
+  }
+  .tile .x:hover { background: rgba(0, 0, 0, .85); }
+  .ring {
+    position: absolute; top: .2rem; left: .2rem; width: 1.3rem; height: 1.3rem;
+    transform: rotate(-90deg);
+  }
+  .ring .track { fill: rgba(0, 0, 0, .45); stroke: rgba(255, 255, 255, .35); stroke-width: 3; }
+  .ring .bar {
+    fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round;
+    transition: stroke-dashoffset .12s linear;
+  }
+  /* Finished uploading: the ring has done its job and would only be clutter. */
+  .tile.done .ring, .tile.failed .ring { display: none; }
   dialog {
     background: var(--card); color: var(--fg); border: 1px solid var(--line);
     border-radius: 10px; padding: 1.25rem 1.4rem; max-width: 26rem;

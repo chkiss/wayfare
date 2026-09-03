@@ -20,6 +20,13 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(raw).expanduser() if raw else default
 
 
+def _host_timezone() -> str:
+    """Imported lazily: timeutil imports schema, which must not import config."""
+    from .timeutil import host_timezone
+
+    return host_timezone()
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -95,6 +102,12 @@ class Config:
     #: Summary of the quarantine calendar. Created on first use if absent.
     pending_calendar_name: str = field(
         default_factory=lambda: os.environ.get("WAYFARE_PENDING_CALENDAR", "Travel (pending)")
+    )
+    #: Last-resort zone for a record whose own timezone could not be resolved.
+    #: Google rejects an event whose time carries no zone at all, so a held
+    #: record needs *some* zone to be written to the pending calendar.
+    timezone: str = field(
+        default_factory=lambda: os.environ.get("WAYFARE_TIMEZONE") or _host_timezone()
     )
 
     # --- model backend ---------------------------------------------------

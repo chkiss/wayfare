@@ -270,6 +270,7 @@ class CalendarClient:
         self._service = None
         self._pending_id: str | None = None
         self._target_id: str | None = None
+        self._calendar_zone: str | None = None
 
     @property
     def service(self):
@@ -282,6 +283,24 @@ class CalendarClient:
         return self._service
 
     # --- calendars -------------------------------------------------------
+    def calendar_timezone(self) -> str | None:
+        """The calendar's own zone, cached for the life of the client.
+
+        The right fallback for a record whose zone could not be resolved. The
+        server's timezone is a property of where the box happens to be hosted
+        and means nothing to the person reading the calendar; this is the zone
+        their other events are already in.
+        """
+        if self._calendar_zone is None:
+            try:
+                calendar = (
+                    self.service.calendars().get(calendarId=self.cfg.calendar_id).execute()
+                )
+                self._calendar_zone = calendar.get("timeZone") or ""
+            except Exception:  # noqa: BLE001 - a fallback zone is never worth failing a write
+                self._calendar_zone = ""
+        return self._calendar_zone or None
+
     def target_calendar_id(self) -> str:
         """Where fully-checked events belong.
 
