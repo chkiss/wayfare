@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_records.html" import record_card %}
+{% from "_source.html" import source_text %}
 {% block body %}
 
 <h1>Read {{ submission.source_file }}</h1>
@@ -18,6 +19,8 @@
     <ul class="issues"><li class="{{ issue.level }}">{{ issue.message }}</li></ul>
   {% endif %}
 {% endfor %}
+
+{{ source_text(submission.source_text) }}
 
 <p style="margin-top:2rem"><a href="/">← Back</a></p>
 {% endblock %}

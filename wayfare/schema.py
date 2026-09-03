@@ -236,6 +236,11 @@ class Itinerary(BaseModel):
     records: list[Record] = Field(default_factory=list)
     #: Issues that concern the itinerary as a whole rather than one record.
     issues: list[Issue] = Field(default_factory=list)
+    #: Exactly the text the extractors were given, per source document. When a
+    #: field comes back wrong the first question is always whether it was on
+    #: the page at all, and without this there is no way to answer it — the
+    #: document itself is deliberately not kept.
+    source_text: dict[str, str] = Field(default_factory=dict)
 
     def add_issue(self, level: IssueLevel, code: str, message: str, source: str) -> None:
         self.issues.append(Issue(level=level, code=code, message=message, source=source))

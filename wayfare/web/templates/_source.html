@@ -1,0 +1,17 @@
+{% macro source_text(sources) %}
+{# What the extractors were actually given. When a field comes back wrong the
+   first question is whether it was on the page at all, and the uploaded file
+   is deliberately not kept, so this is the only way to answer it. #}
+{% if sources %}
+<details class="ics">
+  <summary>What was read from {{ 'these documents' if sources | length > 1 else 'this document' }}</summary>
+  {% for name, text in sources.items() %}
+    <p class="reason" style="margin:.6rem 0 .2rem">{{ name }}</p>
+    <div class="copyable">
+      <pre><code>{{ text or "(nothing was readable)" }}</code></pre>
+      <button class="copy" type="button" onclick="wfCopy(this)">copy</button>
+    </div>
+  {% endfor %}
+</details>
+{% endif %}
+{% endmacro %}

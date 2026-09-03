@@ -84,6 +84,7 @@ def combine(itineraries: list[Itinerary], existing_events: list | None = None) -
 
     for itinerary in itineraries:
         combined.issues.extend(itinerary.issues)
+        combined.source_text.update(itinerary.source_text)
 
         for candidate in itinerary.records:
             identity = _designator(candidate)

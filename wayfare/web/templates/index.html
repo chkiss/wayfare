@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_records.html" import record_card %}
+{% from "_source.html" import source_text %}
 {% block body %}
 
 <div class="between">
@@ -91,6 +92,7 @@
       <ul class="issues"><li class="{{ issue.level }}">{{ issue.message }}</li></ul>
     {% endif %}
   {% endfor %}
+  {{ source_text(submission.source_text) }}
 {% endfor %}
 
 <script>

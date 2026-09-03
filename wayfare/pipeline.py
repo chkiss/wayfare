@@ -37,6 +37,10 @@ from .validate import run_all
 #: Order of authority. Earlier wins on a field-by-field conflict.
 TRUST = {"barcode": 3, "kitinerary": 2, "llm": 1, "manual": 4}
 
+#: Labels the barcode contents where they are appended to the OCR text, so the
+#: model can tell machine-written data from what was read off the pixels.
+BARCODE_HEADING = "--- barcode contents (machine-written, not OCR) ---"
+
 
 def process_file(path: Path, original_name: str | None = None, existing_events=None) -> Itinerary:
     """Full pipeline for an uploaded file."""
@@ -62,21 +66,42 @@ def _process(
     payloads = barcode_extractor.scan_images(ingested.image_paths)
     payloads.extend(barcode_extractor.find_in_text(ingested.text))
     boarding_passes = []
+    unparsed: list[str] = []
     for payload in payloads:
-        boarding_passes.extend(barcode_extractor.parse(payload))
+        legs = barcode_extractor.parse(payload)
+        boarding_passes.extend(legs)
+        if not legs:
+            unparsed.append(payload)
     barcode_records = barcode_extractor.to_records(boarding_passes, ingested.source_file)
     candidates.extend(barcode_records)
+
+    # A barcode that is not a boarding pass used to be decoded and dropped on
+    # the floor. Most rail and coach tickets carry one, and while the payload
+    # is not a schema we can parse, it is machine-written text about this exact
+    # booking — a reservation number, a service, sometimes the stations. It
+    # goes to the model as source text, which also lets the model quote it.
+    model_text = ingested.text
+    if unparsed:
+        model_text = (model_text + "\n\n" + BARCODE_HEADING + "\n" + "\n".join(unparsed)).strip()
+        itinerary.add_issue(
+            IssueLevel.INFO,
+            "barcode.not_a_boarding_pass",
+            f"Read {len(unparsed)} barcode{'s' if len(unparsed) > 1 else ''} that "
+            "are not IATA boarding passes. Their contents were passed to the "
+            "reader as extra source text.",
+            "pipeline",
+        )
 
     # 2. KItinerary, when the input is a real document and the tool is present.
     if source_path is not None and kitinerary_extractor.available():
         candidates.extend(kitinerary_extractor.extract(source_path, ingested.source_file))
 
     # 3. The model, over text only.
-    if ingested.text.strip():
+    if model_text.strip():
         try:
             candidates.extend(
                 llm_extractor.extract(
-                    ingested.text, ingested.source_file, ingested.ocr_confidence
+                    model_text, ingested.source_file, ingested.ocr_confidence
                 )
             )
         except llm_extractor.LLMUnavailable as exc:
@@ -103,6 +128,9 @@ def _process(
             f"(read via {ingested.method}).",
             "pipeline",
         )
+        # Especially here: "nothing found" is the case where seeing what the
+        # reader actually got is the whole diagnosis.
+        itinerary.source_text[ingested.source_file] = model_text
         return itinerary
 
     itinerary.records = _merge(candidates, itinerary)
@@ -127,6 +155,7 @@ def _process(
             "pipeline",
         )
 
+    itinerary.source_text[ingested.source_file] = model_text
     return run_all(itinerary, existing_events)
 
 

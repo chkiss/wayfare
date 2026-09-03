@@ -58,6 +58,9 @@ class Submission:
     source_file: str
     outcomes: list[RecordOutcome] = field(default_factory=list)
     itinerary_issues: list[dict] = field(default_factory=list)
+    #: What the extractors were given, per document. The uploaded file itself
+    #: is never kept; this is what makes a wrong field diagnosable.
+    source_text: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +68,7 @@ class Submission:
             "created": self.created,
             "source_file": self.source_file,
             "itinerary_issues": self.itinerary_issues,
+            "source_text": self.source_text,
             "records": [o.to_dict() for o in self.outcomes],
             "summary": {
                 "promoted": sum(1 for o in self.outcomes if o.status == "promoted"),
@@ -86,8 +90,10 @@ def decide(record: Record, allow_promote: bool = True) -> tuple[str, str]:
         return "pending", "Automatic promotion is disabled; held for review."
 
     if record.warnings:
-        first = record.warnings[0].message
-        return "pending", f"Held for review — {first}"
+        # The warnings are listed in full directly underneath this line, so
+        # quoting the first one here just printed the same sentence twice.
+        count = len(record.warnings)
+        return "pending", f"Held for review — {count} thing{'s' if count > 1 else ''} to check:"
 
     if confidence < cfg.promote_threshold:
         return (
@@ -129,6 +135,7 @@ def commit(
         created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         source_file=source_file,
         itinerary_issues=[i.model_dump(mode="json") for i in itinerary.issues],
+        source_text=dict(itinerary.source_text),
     )
 
     client = client or (None if dry_run else CalendarClient())
