@@ -33,14 +33,14 @@ def entry(**overrides):
 
 
 def test_quoted_fields_are_accepted():
-    supported, unsupported = llm._verify_evidence(entry(), SOURCE)
+    supported, unsupported, _ = llm._verify_evidence(entry(), SOURCE)
     assert not unsupported
     assert "departure_local" in supported
 
 
 def test_invented_field_without_a_quote_is_rejected():
     bad = entry(seat="14A")  # No evidence entry for "seat" at all.
-    supported, unsupported = llm._verify_evidence(bad, SOURCE)
+    supported, unsupported, _ = llm._verify_evidence(bad, SOURCE)
     assert "seat" in unsupported
 
 
@@ -48,7 +48,7 @@ def test_invented_field_with_a_fabricated_quote_is_rejected():
     bad = entry()
     bad["arrival_local"] = "2026-03-04T18:40"
     bad["evidence"]["arrival_local"] = "Arrive 18:40"  # Not in the source.
-    supported, unsupported = llm._verify_evidence(bad, SOURCE)
+    supported, unsupported, _ = llm._verify_evidence(bad, SOURCE)
     assert "arrival_local" in unsupported
 
 
@@ -62,7 +62,7 @@ def test_unsupported_values_never_reach_the_record():
 
 def test_quote_matching_survives_ocr_whitespace_noise():
     noisy = SOURCE.replace("Booking reference: ABC123", "Booking   reference:   ABC123")
-    supported, unsupported = llm._verify_evidence(entry(), noisy)
+    supported, unsupported, _ = llm._verify_evidence(entry(), noisy)
     assert "confirmation" in supported
 
 

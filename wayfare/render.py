@@ -195,12 +195,29 @@ def event_reminders(record, conventions: dict[str, Any] | None = None) -> dict |
 def event_location(record) -> str | None:
     if isinstance(record, (FlightRecord, TrainRecord)):
         origin = record.origin
-        return origin.address or origin.name or origin.iata
+        if origin.address:
+            return origin.address
+        # The full name, never the code — this field has to work in Maps. The
+        # hall is appended when there is one, because at a station that is the
+        # part that tells you where to stand.
+        if origin.name:
+            return f"{origin.name}, {origin.detail}" if origin.detail else origin.name
+        return origin.iata
     if isinstance(record, LodgingRecord):
         return record.location.address or record.location.name
     if isinstance(record, OtherRecord) and record.location:
         return record.location.address or record.location.name
     return None
+
+
+def _endpoint(place) -> str:
+    """A place as the description should show it: name, hall, then city."""
+    parts = [place.label()]
+    if place.detail and place.detail not in parts[0]:
+        parts.append(place.detail)
+    if place.city and place.city not in parts[0]:
+        parts.append(place.city)
+    return ", ".join(parts)
 
 
 def event_description(record, conventions: dict[str, Any] | None = None) -> str:
@@ -209,9 +226,12 @@ def event_description(record, conventions: dict[str, Any] | None = None) -> str:
     lines: list[str] = []
 
     if isinstance(record, (FlightRecord, TrainRecord)):
-        lines.append(f"Depart: {format_local(record.departure)} — {record.origin.label()}")
+        # The hall or concourse belongs here rather than in the title: it is
+        # useless until you are at the station, and then it is the only thing
+        # you want.
+        lines.append(f"Depart: {format_local(record.departure)} — {_endpoint(record.origin)}")
         if record.arrival:
-            lines.append(f"Arrive: {format_local(record.arrival)} — {record.destination.label()}")
+            lines.append(f"Arrive: {format_local(record.arrival)} — {_endpoint(record.destination)}")
         for label, attr in (
             ("Terminal", "terminal_departure"),
             ("Seat", "seat"),

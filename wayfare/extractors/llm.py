@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 
 import httpx
 
@@ -58,11 +59,13 @@ Schema:
       "operator": string|null,         // train/bus/ferry: operator, e.g. "Amtrak"
       "number": string|null,           // service number, digits only
       "origin_iata": string|null,      // flight: 3-letter airport code
-      "origin_name": string|null,      // station or airport as printed
+      "origin_name": string|null,      // SHORT station or airport name
       "origin_city": string|null,      // the town it is in, e.g. "Boston"
+      "origin_detail": string|null,    // hall, terminal or concourse, if any
       "destination_iata": string|null,
       "destination_name": string|null,
       "destination_city": string|null,
+      "destination_detail": string|null,
       "departure_local": string|null,  // "YYYY-MM-DDTHH:MM", local time at origin
       "arrival_local": string|null,    // "YYYY-MM-DDTHH:MM", local time at destination
       "property_name": string|null,    // lodging
@@ -103,9 +106,17 @@ Rules, in order of importance:
    quote the station name it came from as the evidence.
 8. ALWAYS fill in *_name, and never leave it null because the document prints
    an abbreviation. A ticket that says "BOS - NYP" names two stations: give
-   "Back Bay Station" or "South Station" and "New York Penn Station", quoting
-   the printed code as the evidence. The name is what appears on the calendar,
-   and a code the reader has to decipher is worse than a name.
+   "Back Bay Station" and "Penn Station", quoting the printed code as the
+   evidence. The name is what appears on the calendar, and a code the reader
+   has to decipher is worse than a name.
+9. *_name is the SHORT name that identifies the station, and *_detail is the
+   hall, terminal or concourse within it. "Moynihan Train Hall at Penn
+   Station" is name "Penn Station", detail "Moynihan Train Hall". The name
+   goes in the calendar title, where length costs the reader; the detail goes
+   in the description, where it is what they need on arrival.
+10. The source text may end with a block of barcode contents. That part is
+   machine-written and exact, so where it disagrees with the rest of the
+   document, which was read by OCR, the barcode is right.
 """
 
 
@@ -398,8 +409,101 @@ def _normalise(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip().casefold()
 
 
-def _verify_evidence(entry: dict, source_text: str) -> tuple[set[str], set[str]]:
-    """Split the entry's fields into those the source supports and those it does not."""
+#: Fields where OCR noise is expected and a corrected quote is still evidence.
+#: A station name read as "Moynitan Train Hall at Penn Sta" and returned as
+#: "Moynihan Train Hall at Penn Station" plainly came from the page — demanding
+#: the garbled spelling back verbatim discards a value that is *more* correct
+#: than the source.
+#:
+#: Everything not listed here stays exact, deliberately. A time, a date, a
+#: flight number, a booking reference and an airport code are precisely where
+#: a one-character difference is the error being hunted, not noise to smooth
+#: over: "BBDO3F" and "BBD03F" must never be treated as the same string.
+FUZZY_FIELDS = {
+    "origin_name",
+    "destination_name",
+    "origin_city",
+    "destination_city",
+    "origin_detail",
+    "destination_detail",
+    "property_name",
+    "address",
+    "operator",
+    "traveller",
+    "title",
+}
+
+#: How close a corrected quote must be to something on the page. High enough
+#: that a different station never passes, low enough to absorb a few OCR
+#: letters and an expanded abbreviation.
+FUZZY_THRESHOLD = 0.82
+
+
+#: A prefix must still be most of the value before it counts as having been
+#: seen. Without a floor, "Penn" would vouch for "Pennsylvania Avenue".
+MIN_PREFIX_SHARE = 0.6
+
+
+def _close_to_a_window(needle: str, haystack: str) -> bool:
+    """Is there a stretch of the source about this long and about this shape?
+
+    Compared window by window rather than against the whole document, because
+    a ratio over three thousand characters is swamped by everything else on
+    the page.
+    """
+    matcher = SequenceMatcher(None, needle, "", autojunk=False)
+    span = len(needle)
+    step = max(1, span // 4)
+    for start in range(0, max(1, len(haystack) - span + 1), step):
+        matcher.set_seq2(haystack[start : start + span + step])
+        # quick_ratio is an upper bound, so a cheap reject before the real one.
+        if matcher.quick_ratio() < FUZZY_THRESHOLD:
+            continue
+        if matcher.ratio() >= FUZZY_THRESHOLD:
+            return True
+    return False
+
+
+def _fuzzy_in(needle: str, haystack: str) -> bool:
+    """Does the source contain something close enough to this quote?
+
+    Two ways it can, because documents mangle names in two different ways.
+    OCR misreads letters, which leaves a string of the same length and nearly
+    the same shape. Tickets abbreviate, which leaves a prefix: the page says
+    "Penn Sta" where the station is "Penn Station". Only checking for noise
+    would reject the expansion, which is the more useful of the two.
+    """
+    if len(needle) < 6:
+        return False  # Too short to tell a correction from a coincidence.
+
+    if _close_to_a_window(needle, haystack):
+        return True
+
+    # Try the value cut ever shorter, in case the page prints an abbreviation
+    # of it. Character by character rather than word by word, because the
+    # truncation usually falls inside the last word: "Penn Sta" for "Penn
+    # Station". The floor is what stops a prefix vouching for a longer name it
+    # merely begins with.
+    floor = max(6, int(len(needle) * MIN_PREFIX_SHARE))
+    for end in range(len(needle) - 1, floor - 1, -1):
+        if needle[:end] in haystack:
+            return True
+
+    # Garbled *and* abbreviated. Only word boundaries here: a fuzzy match on an
+    # arbitrary cut is loose enough to be worth nothing.
+    for cut in [i for i, char in enumerate(needle) if char == " " and i >= floor]:
+        if _close_to_a_window(needle[:cut], haystack):
+            return True
+    return False
+
+
+def _verify_evidence(entry: dict, source_text: str) -> tuple[set[str], set[str], set[str]]:
+    """Split the entry's fields into supported, unsupported, and corrected.
+
+    "Corrected" means the quote was not on the page character for character but
+    was close enough to something that was. Those fields are used, and named,
+    so a reviewer can see which values were cleaned up rather than read.
+    """
     evidence = entry.get("evidence")
     if not isinstance(evidence, dict):
         evidence = {}
@@ -407,16 +511,26 @@ def _verify_evidence(entry: dict, source_text: str) -> tuple[set[str], set[str]]
     haystack = _normalise(source_text)
     supported: set[str] = set()
     unsupported: set[str] = set()
+    corrected: set[str] = set()
 
     for field, value in entry.items():
         if field in {"kind", "evidence"} or value in (None, "", []):
             continue
+
         quote = evidence.get(field)
-        if isinstance(quote, str) and quote.strip() and _normalise(quote) in haystack:
+        if not isinstance(quote, str) or not quote.strip():
+            unsupported.add(field)
+            continue
+
+        needle = _normalise(quote)
+        if needle in haystack:
             supported.add(field)
+        elif field in FUZZY_FIELDS and _fuzzy_in(needle, haystack):
+            supported.add(field)
+            corrected.add(field)
         else:
             unsupported.add(field)
-    return supported, unsupported
+    return supported, unsupported, corrected
 
 
 def _parse_local(value) -> LocalTime | None:
@@ -486,7 +600,7 @@ def _build_record(
     entry: dict, source_text: str, source_file: str, ocr_confidence: float | None
 ) -> Record | None:
     kind = str(entry.get("kind") or "").strip().lower()
-    supported, unsupported = _verify_evidence(entry, source_text)
+    supported, unsupported, corrected = _verify_evidence(entry, source_text)
 
     # Anything the model could not quote from the source is discarded before
     # it is ever used to build a record.
@@ -546,10 +660,12 @@ def _build_record(
             origin=Place(
                 name=clean.get("origin_name"),
                 city=clean.get("origin_city"),
+                detail=clean.get("origin_detail"),
             ),
             destination=Place(
                 name=clean.get("destination_name"),
                 city=clean.get("destination_city"),
+                detail=clean.get("destination_detail"),
             ),
             departure=departure,
             arrival=_parse_local(clean.get("arrival_local")),
@@ -586,6 +702,16 @@ def _build_record(
         return None
 
     _flag_expanded_places(record, source_text)
+
+    if corrected:
+        record.add_issue(
+            IssueLevel.INFO,
+            "llm.corrected_from_source",
+            "Read through OCR noise for: "
+            + ", ".join(sorted(corrected))
+            + ". The value is close to the page but not identical to it.",
+            SOURCE,
+        )
 
     if unsupported:
         record.add_issue(
