@@ -116,6 +116,23 @@ def collect(session: str, file_ids: list[str]) -> list[StagedFile]:
     return found
 
 
+def list_ids(session: str) -> list[str]:
+    """Everything currently staged for this session.
+
+    The page uses this to tell whether the batch it is holding is still on the
+    server. Coming back to a submitted page leaves the browser showing files
+    that were read and cleared minutes ago.
+    """
+    try:
+        directory = _session_dir(session)
+    except ValueError:
+        return []
+    try:
+        return sorted(p.name for p in directory.iterdir() if p.suffix != ".json")
+    except OSError:
+        return []
+
+
 def remove(session: str, file_id: str) -> bool:
     item = get(session, file_id)
     if item is None:

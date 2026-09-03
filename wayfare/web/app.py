@@ -56,6 +56,22 @@ app = FastAPI(title="wayfare", docs_url=None, redoc_url=None)
 
 Scope = Literal["owner", "agent"]
 
+#: Headings for the browser-facing error page. The status code is a fact about
+#: HTTP; these say what happened in the terms the person was working in.
+HTTP_HEADINGS = {
+    400: "That submission had nothing in it",
+    404: "Not found",
+    413: "That file is too big",
+    503: "Not set up yet",
+}
+
+HTTP_SUGGESTIONS = {
+    400: "If you came back to this page after submitting, the files were already "
+    "read and cleared. Add them again and they will upload as you do.",
+    413: "Booking documents are small. Twenty megabytes is the limit per file.",
+    503: "Finish connecting a calendar on the setup page, then try again.",
+}
+
 
 @app.exception_handler(StarletteHTTPException)
 def _http_exception(request: Request, exc: StarletteHTTPException):
@@ -86,6 +102,21 @@ def _http_exception(request: Request, exc: StarletteHTTPException):
                 "next": request.url.path,
             },
             status_code=403,
+        )
+
+    # Anything else a browser asked for gets a page, not the API's error body.
+    # {"detail": "Send at least one file, or some text."} is a correct answer
+    # to the wrong question: the person is holding a phone, not a client.
+    if wants_html:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "error.html",
+            {
+                "heading": HTTP_HEADINGS.get(exc.status_code, "Something went wrong"),
+                "detail": exc.detail,
+                "suggestion": HTTP_SUGGESTIONS.get(exc.status_code),
+            },
+            status_code=exc.status_code,
         )
 
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -290,6 +321,17 @@ async def stage_upload(
         "wayfare_batch", session, httponly=True, samesite="lax", secure=_is_https(request)
     )
     return response
+
+
+@app.get("/uploads")
+def list_uploads(request: Request, scope: Scope = Depends(require_owner)):
+    """Which staged files the server still holds.
+
+    The page asks on restore. A browser going back to a submitted page shows
+    the batch exactly as it was, but the server read and cleared it, so the
+    two have to be reconciled before the button is pressed again.
+    """
+    return JSONResponse({"ids": staging.list_ids(_staging_session(request))})
 
 
 @app.delete("/uploads/{file_id}")

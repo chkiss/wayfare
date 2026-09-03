@@ -37,7 +37,7 @@ def test_once_connected_the_home_page_appears(client, monkeypatch):
     connect(monkeypatch)
     response = client.get("/", headers=HTML)
     assert response.status_code == 200
-    assert "Read it" in response.text
+    assert "Generate iCals" in response.text
 
 
 def test_a_missing_model_is_a_banner_not_a_redirect(client, monkeypatch):

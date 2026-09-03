@@ -67,7 +67,7 @@
   </p>
   <p style="margin:1rem 0 .35rem"><label for="text">…and/or paste the confirmation text</label></p>
   <textarea id="text" name="text" placeholder="Paste a booking confirmation here."></textarea>
-  <p class="row" style="margin-top:.85rem"><button type="submit">Read it</button></p>
+  <p class="row" style="margin-top:.85rem"><button type="submit">Generate iCals</button></p>
 </form>
 
 <hr class="divider">
@@ -98,7 +98,7 @@
 //
 // Reading a trip is slow — OCR on several images, then a model call — and none
 // of it starts until the last byte arrives. Uploading during the time the user
-// spends choosing means pressing "Read it" costs only the reading.
+// spends choosing means pressing the button costs only the reading.
 //
 // The plain multipart input underneath still works if this script never runs,
 // so /submit accepts both a staged batch and ordinary form files.
@@ -116,6 +116,7 @@
 
   const items = [];
   const RING = 2 * Math.PI * 9; // r=9 in the SVG below.
+  const READY_LABEL = submit.textContent.trim();
 
   const describe = (bytes) =>
     bytes > 1024 * 1024
@@ -127,7 +128,7 @@
     const staged = items.filter((i) => i.id);
     const busy = items.some((i) => !i.id && !i.failed);
     submit.disabled = busy || (!staged.length && !document.getElementById("text").value.trim());
-    submit.textContent = busy ? "Uploading…" : "Read it";
+    submit.textContent = busy ? "Uploading…" : READY_LABEL;
 
     form.querySelectorAll("input[name=staged]").forEach((el) => el.remove());
     staged.forEach((item) => {
@@ -297,6 +298,32 @@
         });
       })
     );
+  });
+
+  // Coming back to this page after submitting shows the batch exactly as it
+  // was — the browser restores the whole page from its cache — while the
+  // server read those files and cleared them. Pressing the button then posted
+  // ids that no longer existed and got "Send at least one file, or some text",
+  // with the screenshot still visible on screen. So on every restore, ask what
+  // the server still holds and re-upload anything it does not. The File
+  // objects are still in memory, so this needs nothing from the user.
+  window.addEventListener("pageshow", () => {
+    if (!items.length) return;
+    fetch("/uploads", { headers: { accept: "application/json" } })
+      .then((response) => (response.ok ? response.json() : { ids: [] }))
+      .then((held) => {
+        const known = new Set(held.ids || []);
+        items.forEach((item) => {
+          if (item.id && known.has(item.id)) return;
+          item.id = null;
+          item.failed = false;
+          item.box.classList.remove("done", "failed");
+          item.box.querySelector("figcaption").textContent = item.file.name;
+          send(item);
+        });
+        ready();
+      })
+      .catch(() => {});
   });
 
   ready();

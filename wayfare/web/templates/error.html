@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} — wayfare{% endblock %}
+{% block body %}
+
+<h1>{{ heading }}</h1>
+<div class="card">
+  <p class="reason" style="color:var(--fg); margin:0">{{ detail }}</p>
+  {% if suggestion %}<p class="reason">{{ suggestion }}</p>{% endif %}
+  <div class="row" style="margin-top:.85rem">
+    <a href="/"><button type="button">Back to wayfare</button></a>
+  </div>
+</div>
+
+{% endblock %}
