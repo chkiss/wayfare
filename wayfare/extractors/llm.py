@@ -101,6 +101,11 @@ Rules, in order of importance:
    table, a header, or an address. If the city is genuinely not stated and you
    only know it from your own knowledge of the station, still fill it in and
    quote the station name it came from as the evidence.
+8. ALWAYS fill in *_name, and never leave it null because the document prints
+   an abbreviation. A ticket that says "BOS - NYP" names two stations: give
+   "Back Bay Station" or "South Station" and "New York Penn Station", quoting
+   the printed code as the evidence. The name is what appears on the calendar,
+   and a code the reader has to decipher is worse than a name.
 """
 
 
@@ -445,26 +450,34 @@ GROUND_MODES = {
 }
 
 
-def _city_was_stated(record, source_text: str) -> None:
-    """Note a city the model supplied but the document never printed.
+def _flag_expanded_places(record, source_text: str) -> None:
+    """Note place names and cities the model supplied that the document abbreviates.
 
-    Cities are the one field the model is allowed to fill from its own
-    knowledge, because a station name alone cannot yield a timezone and
-    "Back Bay Station" says Boston to any reader. That is still an inference,
-    so it is recorded as one.
+    Places are where the model is allowed to expand rather than transcribe: a
+    ticket reading "BOS - NYP" names two stations, and a calendar entry saying
+    "NYP" is worse than one saying New York Penn Station. The city gets the
+    same latitude for a different reason — a station name alone yields no
+    timezone, and "Back Bay Station" says Boston to any reader.
+
+    Both are still inferences, so both are recorded as such and the reviewer
+    can check them against the source.
     """
     haystack = _normalise(source_text)
-    inferred = []
+    expanded = []
     for place in (getattr(record, "origin", None), getattr(record, "destination", None)):
-        if place is not None and place.city and _normalise(place.city) not in haystack:
-            inferred.append(place.city)
-    if inferred:
+        if place is None:
+            continue
+        for value in (place.name, place.city):
+            if value and _normalise(value) not in haystack:
+                expanded.append(value)
+
+    if expanded:
         record.add_issue(
             IssueLevel.INFO,
-            "place.city_inferred",
-            "The document does not print "
-            + " or ".join(sorted(set(inferred)))
-            + "; the city was inferred from the station name to establish the timezone.",
+            "place.expanded_from_code",
+            "The document abbreviates rather than prints "
+            + ", ".join(sorted(set(expanded)))
+            + ". Expanded from the codes on the ticket; check it against the source.",
             SOURCE,
         )
 
@@ -572,7 +585,7 @@ def _build_record(
     if record is None:
         return None
 
-    _city_was_stated(record, source_text)
+    _flag_expanded_places(record, source_text)
 
     if unsupported:
         record.add_issue(

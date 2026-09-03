@@ -135,5 +135,27 @@ def test_a_place_with_nothing_known_still_says_so():
     assert Place().label() == "?"
 
 
-def test_a_name_still_beats_a_city():
+def test_the_station_name_wins_over_the_city():
+    """The city exists to resolve a timezone, not to appear on the calendar."""
     assert Place(name="Back Bay Station", city="Boston").label() == "Back Bay Station"
+
+
+def test_resolving_a_timezone_never_overwrites_the_station_name():
+    from wayfare.validate import resolve
+
+    leg = TrainRecord(
+        operator="Amtrak",
+        number="85",
+        origin=Place(name="Back Bay Station", city="Boston"),
+        destination=Place(name="New York Penn Station", city="New York"),
+        departure=LocalTime(local=datetime(2026, 3, 4, 9, 15)),
+        provenance=Provenance(extractor="llm"),
+    )
+    resolve.run(trip(leg))
+
+    assert leg.origin.name == "Back Bay Station"
+    assert leg.origin.timezone == "America/New_York"
+
+    from wayfare.render import event_summary
+
+    assert event_summary(leg) == "Amtrak 85 Back Bay Station → New York Penn Station"
