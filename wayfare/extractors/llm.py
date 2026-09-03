@@ -53,14 +53,16 @@ Schema:
 {
   "records": [
     {
-      "kind": "flight" | "train" | "lodging" | "other",
+      "kind": "flight" | "train" | "bus" | "ferry" | "lodging" | "other",
       "carrier": string|null,          // flight: airline IATA code, e.g. "BA"
-      "operator": string|null,         // train: operator name
-      "number": string|null,           // flight or train number, digits only
+      "operator": string|null,         // train/bus/ferry: operator, e.g. "Amtrak"
+      "number": string|null,           // service number, digits only
       "origin_iata": string|null,      // flight: 3-letter airport code
-      "origin_name": string|null,
+      "origin_name": string|null,      // station or airport as printed
+      "origin_city": string|null,      // the town it is in, e.g. "Boston"
       "destination_iata": string|null,
       "destination_name": string|null,
+      "destination_city": string|null,
       "departure_local": string|null,  // "YYYY-MM-DDTHH:MM", local time at origin
       "arrival_local": string|null,    // "YYYY-MM-DDTHH:MM", local time at destination
       "property_name": string|null,    // lodging
@@ -91,6 +93,14 @@ Rules, in order of importance:
    Do not adjust for anything.
 4. If the year is not stated anywhere, use null rather than assuming one.
 5. Return an empty "records" list if the text contains no travel booking.
+6. A station name is not a place name. "Back Bay Station" is in Boston and
+   "Gare de Lyon" is in Paris, so fill in the *_city fields as well as the
+   *_name fields. The city decides the timezone, which decides whether the
+   hour on the calendar is right.
+7. A city may be quoted from any part of the source, including a station code
+   table, a header, or an address. If the city is genuinely not stated and you
+   only know it from your own knowledge of the station, still fill it in and
+   quote the station name it came from as the evidence.
 """
 
 
@@ -423,6 +433,42 @@ def _iata(value) -> str | None:
     return code if len(code) == 3 and code.isalpha() else None
 
 
+#: Scheduled surface transport the model may name, and the mode it becomes.
+#: "coach" and "rail" appear because models use them interchangeably with
+#: "bus" and "train", and rejecting the synonym would discard a real booking.
+GROUND_MODES = {
+    "train": "train",
+    "rail": "train",
+    "bus": "bus",
+    "coach": "bus",
+    "ferry": "ferry",
+}
+
+
+def _city_was_stated(record, source_text: str) -> None:
+    """Note a city the model supplied but the document never printed.
+
+    Cities are the one field the model is allowed to fill from its own
+    knowledge, because a station name alone cannot yield a timezone and
+    "Back Bay Station" says Boston to any reader. That is still an inference,
+    so it is recorded as one.
+    """
+    haystack = _normalise(source_text)
+    inferred = []
+    for place in (getattr(record, "origin", None), getattr(record, "destination", None)):
+        if place is not None and place.city and _normalise(place.city) not in haystack:
+            inferred.append(place.city)
+    if inferred:
+        record.add_issue(
+            IssueLevel.INFO,
+            "place.city_inferred",
+            "The document does not print "
+            + " or ".join(sorted(set(inferred)))
+            + "; the city was inferred from the station name to establish the timezone.",
+            SOURCE,
+        )
+
+
 def _build_record(
     entry: dict, source_text: str, source_file: str, ocr_confidence: float | None
 ) -> Record | None:
@@ -460,9 +506,15 @@ def _build_record(
         record = FlightRecord(
             carrier=(clean.get("carrier") or "").strip().upper()[:3] or None,
             number=str(clean.get("number") or "").strip() or None,
-            origin=Place(iata=_iata(clean.get("origin_iata")), name=clean.get("origin_name")),
+            origin=Place(
+                iata=_iata(clean.get("origin_iata")),
+                name=clean.get("origin_name"),
+                city=clean.get("origin_city"),
+            ),
             destination=Place(
-                iata=_iata(clean.get("destination_iata")), name=clean.get("destination_name")
+                iata=_iata(clean.get("destination_iata")),
+                name=clean.get("destination_name"),
+                city=clean.get("destination_city"),
             ),
             departure=departure,
             arrival=_parse_local(clean.get("arrival_local")),
@@ -470,15 +522,22 @@ def _build_record(
             cabin=clean.get("cabin"),
             **common,
         )
-    elif kind == "train":
+    elif kind in GROUND_MODES:
         departure = _parse_local(clean.get("departure_local"))
         if departure is None:
             return None
         record = TrainRecord(
+            mode=GROUND_MODES[kind],
             operator=clean.get("operator"),
             number=str(clean.get("number") or "").strip() or None,
-            origin=Place(name=clean.get("origin_name")),
-            destination=Place(name=clean.get("destination_name")),
+            origin=Place(
+                name=clean.get("origin_name"),
+                city=clean.get("origin_city"),
+            ),
+            destination=Place(
+                name=clean.get("destination_name"),
+                city=clean.get("destination_city"),
+            ),
             departure=departure,
             arrival=_parse_local(clean.get("arrival_local")),
             seat=clean.get("seat"),
@@ -512,6 +571,8 @@ def _build_record(
 
     if record is None:
         return None
+
+    _city_was_stated(record, source_text)
 
     if unsupported:
         record.add_issue(

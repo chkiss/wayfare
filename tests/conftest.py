@@ -25,6 +25,9 @@ _ROWS = [
     ("EDDF", "Frankfurt am Main Airport", 50.033306, 8.570456, "DE", "Frankfurt am Main", "FRA"),
     ("CYUL", "Montreal / Pierre Elliott Trudeau International", 45.470556, -73.740833, "CA", "Montréal", "YUL"),
     ("EBBR", "Brussels Airport", 50.901402, 4.48444, "BE", "Brussels", "BRU"),
+    # The Northeast Corridor, so rail and coach legs have real distances.
+    ("KBOS", "Boston Logan International Airport", 42.36429, -71.005181, "US", "Boston", "BOS"),
+    ("KPVD", "Rhode Island T. F. Green International", 41.732401, -71.420403, "US", "Providence", "PVD"),
 ]
 
 

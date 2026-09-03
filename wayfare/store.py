@@ -18,6 +18,7 @@ from typing import Any
 
 from .calendar_api import CalendarClient
 from .config import get_config
+from .icswrite import record_to_ics
 from .render import event_summary, load_conventions, to_google_events
 from .schema import Itinerary, Record
 
@@ -33,6 +34,10 @@ class RecordOutcome:
     reason: str
     event_ids: list[str] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
+    #: The whole event as iCalendar text. Every value the tool concluded, in
+    #: the one place a reviewer can read it end to end and paste elsewhere —
+    #: the summary line alone hides the times, zones, location and reminders.
+    ics: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +47,7 @@ class RecordOutcome:
             "reason": self.reason,
             "event_ids": self.event_ids,
             "issues": self.issues,
+            "ics": self.ics,
         }
 
 
@@ -143,6 +149,7 @@ def commit(
             status=status,
             reason=reason,
             issues=[i.model_dump(mode="json") for i in record.issues],
+            ics=record_to_ics(record, conventions, uid_seed=submission.submission_id),
         )
 
         if status != "rejected" and not dry_run and client is not None:

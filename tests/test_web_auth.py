@@ -20,7 +20,9 @@ def test_browser_hitting_setup_gets_the_login_form(monkeypatch):
     response = client(monkeypatch).get("/setup", headers=HTML)
     assert response.status_code == 401
     assert "Owner token" in response.text
-    assert "detail" not in response.text
+    # The bug this guards: answering a browser with the API's JSON error body.
+    assert '{"detail"' not in response.text
+    assert "application/json" not in response.headers.get("content-type", "")
 
 
 def test_the_login_form_remembers_where_you_were_going(monkeypatch):

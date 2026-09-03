@@ -12,7 +12,7 @@ wrong order.
 
 from __future__ import annotations
 
-from ..airports import distance_between
+from ..airports import distance_between, great_circle_km
 from ..schema import FlightRecord, IssueLevel, Itinerary, TrainRecord
 from ..timeutil import elapsed_hours
 
@@ -27,9 +27,24 @@ GROUND_OVERHEAD_H = 0.55
 FAST_KMH = 950.0
 SLOW_KMH = 620.0
 
-#: Rail is slower and far more variable; only gross errors are flagged.
-RAIL_FAST_KMH = 300.0
-RAIL_SLOW_KMH = 45.0
+#: Surface transport is slower and far more variable than flying, so only
+#: gross errors are flagged. Per mode, because a coach doing 300 km/h and a
+#: ferry doing 120 are both impossible while a train doing either is not.
+#: (fastest km/h, slowest km/h, hours of overhead, noun for the message)
+SURFACE_BOUNDS = {
+    "train": (300.0, 45.0, 0.3, "rail"),
+    "bus": (110.0, 25.0, 0.4, "coach"),
+    "ferry": (75.0, 15.0, 0.75, "ferry"),
+}
+
+#: Kept as names because the rail figures are referred to directly in tests
+#: and by callers that predate the per-mode table.
+RAIL_FAST_KMH = SURFACE_BOUNDS["train"][0]
+RAIL_SLOW_KMH = SURFACE_BOUNDS["train"][1]
+
+
+def _has_position(place) -> bool:
+    return place.latitude is not None and place.longitude is not None
 
 
 def _bounds(distance_km: float, fast: float, slow: float, overhead: float) -> tuple[float, float]:
@@ -73,16 +88,25 @@ def _check_leg(record, fast: float, slow: float, overhead: float, noun: str) -> 
 
     distance = None
     origin, destination = getattr(record, "origin", None), getattr(record, "destination", None)
-    if origin is not None and destination is not None and origin.iata and destination.iata:
-        if origin.iata.upper() == destination.iata.upper():
-            record.add_issue(
-                IssueLevel.ERROR,
-                "leg.same_endpoints",
-                f"Origin and destination are both {origin.iata}.",
-                SOURCE,
+    if origin is not None and destination is not None:
+        if origin.iata and destination.iata:
+            if origin.iata.upper() == destination.iata.upper():
+                record.add_issue(
+                    IssueLevel.ERROR,
+                    "leg.same_endpoints",
+                    f"Origin and destination are both {origin.iata}.",
+                    SOURCE,
+                )
+                return
+            distance = distance_between(origin.iata, destination.iata)
+        elif _has_position(origin) and _has_position(destination):
+            # A station carries no IATA code, so without this no surface leg
+            # was ever checked against a distance at all. The coordinates come
+            # from the nearest airport to each endpoint: tens of kilometres out
+            # on a journey of hundreds, which the speed band already absorbs.
+            distance = great_circle_km(
+                origin.latitude, origin.longitude, destination.latitude, destination.longitude
             )
-            return
-        distance = distance_between(origin.iata, destination.iata)
 
     if distance is None:
         if hours > 20:
@@ -101,7 +125,7 @@ def _check_leg(record, fast: float, slow: float, overhead: float, noun: str) -> 
         record.add_issue(
             IssueLevel.ERROR,
             "leg.faster_than_possible",
-            f"{distance:.0f} km in {hours:.1f}h is faster than the aircraft flies "
+            f"{distance:.0f} km in {hours:.1f}h is faster than {noun} travels "
             f"(minimum ≈ {low:.1f}h). A time or a timezone is wrong.",
             SOURCE,
         )
@@ -135,5 +159,8 @@ def run(itinerary: Itinerary) -> Itinerary:
         if isinstance(record, FlightRecord):
             _check_leg(record, FAST_KMH, SLOW_KMH, GROUND_OVERHEAD_H, "flight")
         elif isinstance(record, TrainRecord):
-            _check_leg(record, RAIL_FAST_KMH, RAIL_SLOW_KMH, 0.3, "rail")
+            fast, slow, overhead, noun = SURFACE_BOUNDS.get(
+                getattr(record, "mode", "train"), SURFACE_BOUNDS["train"]
+            )
+            _check_leg(record, fast, slow, overhead, noun)
     return itinerary

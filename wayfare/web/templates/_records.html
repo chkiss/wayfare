@@ -15,6 +15,19 @@
   </ul>
   {% endif %}
 
+  {# Every value the tool concluded, for any status. The summary line above
+     hides the times, their zones, the location, the description and the
+     reminders, which are exactly what a review has to check. #}
+  {% if record.ics %}
+  <details class="ics">
+    <summary>Full event</summary>
+    <div class="copyable">
+      <pre><code>{{ record.ics }}</code></pre>
+      <button class="copy" type="button" onclick="wfCopy(this)">copy</button>
+    </div>
+  </details>
+  {% endif %}
+
   {% if record.status == "pending" %}
   <div class="row" style="margin-top:.85rem">
     <form method="post" action="/submissions/{{ submission_id }}/records/{{ index }}/promote">

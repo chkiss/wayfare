@@ -123,11 +123,16 @@ def event_summary(record, conventions: dict[str, Any] | None = None) -> str:
             destination_city=record.destination.city or record.destination.label(),
         )
     elif isinstance(record, TrainRecord):
+        # The same template serves rail, coach and ferry; {mode} is there for
+        # anyone who wants the difference in the title.
         title = c["train_title"].format(
-            operator=record.operator or "Train",
+            operator=record.operator or {"bus": "Coach", "ferry": "Ferry"}.get(record.mode, "Train"),
             number=record.number or "",
+            mode=record.mode,
             origin=record.origin.label(),
             destination=record.destination.label(),
+            origin_city=record.origin.city or record.origin.label(),
+            destination_city=record.destination.city or record.destination.label(),
         )
     elif isinstance(record, LodgingRecord):
         title = c["lodging_title"].format(

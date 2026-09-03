@@ -177,7 +177,17 @@ class FlightRecord(BaseRecord):
 
 
 class TrainRecord(BaseRecord):
+    """A scheduled surface leg: rail, coach or ferry.
+
+    One record type rather than three, because everything that differs between
+    them is a number — plausible speed, and the noun to use in a message. What
+    matters for a calendar is identical: two named places, two local times, a
+    service number and a seat.
+    """
+
     kind: Literal[Kind.TRAIN] = Kind.TRAIN
+    #: How it travels. Only affects the speed bounds and the wording.
+    mode: Literal["train", "bus", "ferry"] = "train"
     operator: str | None = None
     number: str | None = None
     origin: Place

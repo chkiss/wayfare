@@ -73,6 +73,68 @@ def _resolve_place(place: Place | None) -> list[Issue]:
     return issues
 
 
+#: Words that describe a station rather than name a place. Stripping them is
+#: what turns "Boston South Station" into something the city index can match.
+#: Rail stations are the case that needs this: an airport carries an IATA code,
+#: a hotel carries an address, a station carries neither.
+STATION_WORDS = {
+    "station",
+    "stn",
+    "rail",
+    "railway",
+    "train",
+    "terminal",
+    "terminus",
+    "bus",
+    "coach",
+    "ferry",
+    "port",
+    "pier",
+    "gare",
+    "bahnhof",
+    "hbf",
+    "hauptbahnhof",
+    "centraal",
+    "central",
+    "centrale",
+    "estacion",
+    "estación",
+    "stazione",
+    "st",
+    "amtrak",
+    "via",
+}
+
+#: Connectors that begin no city name. Without these, "Gare de Lyon" reduces
+#: to "de Lyon" and matches nothing.
+_CONNECTORS = {"de", "du", "des", "la", "le", "les", "of", "the", "den", "van", "di", "el"}
+
+
+def _city_guesses(place: Place) -> list[str]:
+    """Candidate city names hidden inside a station name.
+
+    "Back Bay Station" yields "Back Bay"; "Boston South Station" yields
+    "Boston South" and "Boston". Tried in order, longest first, so a specific
+    match wins before a one-word guess that might collide.
+    """
+    if not place.name:
+        return []
+
+    # "Boston, MA" and "Paris (Gare de Lyon)" both put the city first.
+    head = place.name.split(",")[0].split("(")[0]
+    words = [w for w in head.replace("-", " ").split() if w]
+    kept = [w for w in words if w.strip(".").lower() not in STATION_WORDS]
+    while kept and kept[0].strip(".").lower() in _CONNECTORS:
+        kept.pop(0)
+
+    guesses: list[str] = []
+    for length in range(len(kept), 0, -1):
+        candidate = " ".join(kept[:length]).strip()
+        if len(candidate) > 2 and candidate not in guesses:
+            guesses.append(candidate)
+    return guesses
+
+
 def _resolve_by_name(place: Place | None) -> list[Issue]:
     """Give a non-airport place a timezone from the city it names.
 
@@ -88,7 +150,11 @@ def _resolve_by_name(place: Place | None) -> list[Issue]:
     if not db.available:
         return issues
 
-    airport = db.find_place(place.city, place.address, place.name)
+    # A city or an address names the place itself. A station name only contains
+    # it, and sometimes contains the wrong one — Gare de Lyon is in Paris — so
+    # a match from that route is trusted for the timezone and nothing else.
+    named = db.find_place(place.city, place.address)
+    airport = named or db.find_place(place.name, *_city_guesses(place))
     if airport is None:
         return issues
 
@@ -97,8 +163,14 @@ def _resolve_by_name(place: Place | None) -> list[Issue]:
         return issues
 
     place.timezone = zone
-    if not place.city:
+    if named is not None and not place.city:
         place.city = airport.city or None
+
+    # Approximate coordinates too, so a surface leg between two stations can be
+    # checked against a distance. Accurate to the city, which is the scale the
+    # speed bands work at — they would not survive being trusted for more.
+    if place.latitude is None and place.longitude is None:
+        place.latitude, place.longitude = airport.latitude, airport.longitude
     issues.append(
         Issue(
             level=IssueLevel.INFO,
@@ -145,7 +217,28 @@ def run(itinerary: Itinerary) -> Itinerary:
             _apply_zone(when, place)
 
         _flag_missing_zone(record)
+        _flag_unnamed_endpoint(record)
     return itinerary
+
+
+def _flag_unnamed_endpoint(record) -> None:
+    """An endpoint that was never read leaves a "→ ?" on the calendar.
+
+    Worth saying in its own words. The reader can tell from the title that
+    something is missing, but not that the tool knows it is missing, nor which
+    end of the journey it was.
+    """
+    if not isinstance(record, (FlightRecord, TrainRecord)):
+        return
+    for label, place in (("origin", record.origin), ("destination", record.destination)):
+        if place.label() == "?":
+            record.add_issue(
+                IssueLevel.WARN,
+                f"leg.{label}_not_read",
+                f"The {label} could not be read from the document, so the title shows "
+                "'?'. Type it in before adding this to your calendar.",
+                SOURCE,
+            )
 
 
 def _flag_missing_zone(record) -> None:

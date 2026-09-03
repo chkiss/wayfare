@@ -9,6 +9,8 @@
 
   "_title_tokens": "{carrier_number} {carrier} {number} {origin} {destination} {origin_city} {destination_city}",
   "flight_title": "{origin} → {destination_city} ({carrier} {number})",
+
+  "_train_title": "Rail, coach and ferry share this. Adds {operator} and {mode}.",
   "train_title": "{operator} {number} {origin} → {destination}",
   "lodging_title": "{property_name}",
   "other_title": "{title}",

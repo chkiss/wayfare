@@ -83,6 +83,23 @@
   button.copy:hover { color: var(--fg); border-color: var(--muted); }
   /* Square, so the gear sits as an icon rather than a very short word. */
   button.icon { padding: .55rem .7rem; font-size: 1rem; line-height: 1; }
+  /* The full event as iCalendar text: collapsed by default, because it is for
+     checking rather than reading, but present on every record. */
+  details.ics { margin: .7rem 0 0; }
+  details.ics summary {
+    cursor: pointer; font-size: .82rem; color: var(--muted);
+    font-weight: 600; width: max-content;
+  }
+  details.ics summary:hover { color: var(--fg); }
+  details.ics .copyable { display: block; position: relative; margin-top: .5rem; }
+  details.ics pre {
+    margin: 0; padding: .6rem .7rem; overflow-x: auto;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+    font-size: .74rem; line-height: 1.45; white-space: pre;
+  }
+  details.ics pre code { user-select: all; word-break: normal; }
+  details.ics button.copy { position: absolute; top: .35rem; right: .35rem; background: var(--card); }
+
   /* Drop target. Dashed only while something is being dragged over it, so the
      form does not look like a construction site the rest of the time. */
   #dropzone {
