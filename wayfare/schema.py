@@ -113,8 +113,18 @@ class Provenance(BaseModel):
     text_sha256: str | None = None
     #: Mean OCR character confidence, 0..1, when OCR was involved.
     ocr_confidence: float | None = None
+    #: Which model read it, when a model did. Named on the event itself: free
+    #: models vary enormously in quality and get swapped when one is rate
+    #: limited, so "a model said so" is not enough to judge a record by.
+    model: str | None = None
     #: Free-form note from the extractor.
     note: str | None = None
+
+    def describe(self) -> str:
+        """How the event should credit its source."""
+        if self.model and "llm" in self.extractor:
+            return self.extractor.replace("llm", f"llm: {self.model}")
+        return self.extractor
 
 
 class BaseRecord(BaseModel):

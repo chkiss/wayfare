@@ -264,7 +264,7 @@ def event_description(record, conventions: dict[str, Any] | None = None) -> str:
 
     lines.append("")
     lines.append(
-        f"— wayfare ({record.provenance.extractor}, confidence {record.confidence():.0%})"
+        f"— wayfare ({record.provenance.describe()}, confidence {record.confidence():.0%})"
     )
     return "\n".join(lines)
 

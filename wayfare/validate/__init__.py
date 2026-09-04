@@ -10,6 +10,10 @@ because each one depends on the previous having succeeded:
 3. ``geo``       — is the implied block time physically possible?
 4. ``schedule``  — optional: does the flight number really fly at that time?
 5. ``coherence`` — do the records agree with each other and with the calendar?
+6. ``completeness`` — is a leg the document lists missing altogether?
+
+The last one runs last and asks the opposite question to the others. They all
+check a record that exists; it checks for one that should.
 
 A validator never silently edits a value. Anything it changes it records as an
 issue, so the review screen can always show what the tool did on its own.
@@ -18,9 +22,9 @@ issue, so the review screen can always show what the tool did on its own.
 from __future__ import annotations
 
 from ..schema import Itinerary
-from . import coherence, geo, repair, resolve, schedule
+from . import coherence, completeness, geo, repair, resolve, schedule
 
-__all__ = ["run_all", "coherence", "geo", "repair", "resolve", "schedule"]
+__all__ = ["run_all", "coherence", "completeness", "geo", "repair", "resolve", "schedule"]
 
 
 def run_all(itinerary: Itinerary, existing_events: list | None = None) -> Itinerary:
@@ -30,4 +34,5 @@ def run_all(itinerary: Itinerary, existing_events: list | None = None) -> Itiner
     geo.run(itinerary)
     schedule.run(itinerary)
     coherence.run(itinerary, existing_events or [])
+    completeness.run(itinerary)
     return itinerary

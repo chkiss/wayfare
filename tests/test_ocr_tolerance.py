@@ -90,6 +90,62 @@ def test_a_time_is_never_fuzzy_matched():
     assert "departure_local" in unsupported
 
 
+# --- a quote assembled from two columns ---------------------------------
+
+TWO_COLUMN = _normalise(
+    """
+    From                     To                    Flight   Departure   Arrival
+    NEW YORK JOHN F KENNEDY  PONTA DELGADA         S4246    20:55       06:45
+    INTL                     JOAO PAULO II                  20Sep2026   21Sep2026
+    """
+)
+
+
+def leg(**overrides):
+    base = {
+        "kind": "flight",
+        "carrier": "S4",
+        "number": "246",
+        "departure_local": "2026-09-20T20:55",
+        "evidence": {"carrier": "S4246", "number": "S4246", "departure_local": "20:55 20Sep2026"},
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_time_and_date_from_different_columns_still_count():
+    """The page prints both, in different places. The quote joins them."""
+    supported, unsupported, _ = _verify_evidence(leg(), TWO_COLUMN)
+    assert "departure_local" in supported
+    assert not unsupported
+
+
+def test_the_leg_survives_being_built():
+    """With no departure there is no record at all, which is how one vanished."""
+    record = _build_record(leg(), TWO_COLUMN, "ticket.pdf", None)
+    assert record is not None
+    assert record.departure.local.hour == 20
+
+
+def test_an_invented_hour_still_fails_when_assembled():
+    bad = leg(evidence={**leg()["evidence"], "departure_local": "18:40 20Sep2026"})
+    _, unsupported, _ = _verify_evidence(bad, TWO_COLUMN)
+    assert "departure_local" in unsupported
+
+
+def test_an_invented_date_still_fails_when_assembled():
+    bad = leg(evidence={**leg()["evidence"], "departure_local": "20:55 29Sep2026"})
+    _, unsupported, _ = _verify_evidence(bad, TWO_COLUMN)
+    assert "departure_local" in unsupported
+
+
+def test_a_single_missing_token_is_not_assembly():
+    """One token that is not on the page is absent, not scattered."""
+    bad = leg(confirmation="ZZZZZZ", evidence={**leg()["evidence"], "confirmation": "ZZZZZZ"})
+    _, unsupported, _ = _verify_evidence(bad, TWO_COLUMN)
+    assert "confirmation" in unsupported
+
+
 def test_a_service_number_is_never_fuzzy_matched():
     bad = entry(number="86", evidence={**entry()["evidence"], "number": "86"})
     _, unsupported, _ = _verify_evidence(bad, OCR)

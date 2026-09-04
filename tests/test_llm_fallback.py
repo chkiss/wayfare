@@ -47,9 +47,12 @@ def test_a_rate_limited_model_falls_through_to_the_next(monkeypatch):
         return Reply(429) if model == "primary:free" else Reply(200, '{"records": []}')
 
     monkeypatch.setattr(llm, "_post", fake_post)
-    result = llm._call_model("some text", config.get_config())
+    payload, model = llm._call_model("some text", config.get_config())
     assert tried == ["primary:free", "spare-one:free"]
-    assert result == {"records": []}
+    assert payload == {"records": []}
+    # The model that answered, not the one that was configured — it is what
+    # gets named on the event.
+    assert model == "spare-one:free"
 
 
 def test_a_network_failure_also_falls_through(monkeypatch):
@@ -59,7 +62,7 @@ def test_a_network_failure_also_falls_through(monkeypatch):
         return Reply(200, '{"records": []}')
 
     monkeypatch.setattr(llm, "_post", fake_post)
-    assert llm._call_model("some text", config.get_config()) == {"records": []}
+    assert llm._call_model("some text", config.get_config())[0] == {"records": []}
 
 
 def test_a_bad_key_is_not_retried_against_every_model(monkeypatch):

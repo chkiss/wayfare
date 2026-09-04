@@ -96,6 +96,13 @@ Rules, in order of importance:
    Do not adjust for anything.
 4. If the year is not stated anywhere, use null rather than assuming one.
 5. Return an empty "records" list if the text contains no travel booking.
+5a. Return ONE RECORD PER LEG, and check before you finish that you have not
+   missed one. A ticket receipt normally lists an outbound and a return, and
+   often a connection as well; they may be laid out as separate blocks, as
+   rows of a table, or as columns that the text extraction has jumbled. Every
+   distinct flight or service number in the document is a separate record.
+   Missing a leg is the worst thing you can do here: a wrong value gets
+   noticed, an absent flight does not.
 6. A station name is not a place name. "Back Bay Station" is in Boston and
    "Gare de Lyon" is in Paris, so fill in the *_city fields as well as the
    *_name fields. The city decides the timezone, which decides whether the
@@ -253,15 +260,39 @@ def status() -> dict:
     }
 
 
-def extract(text: str, source_file: str, ocr_confidence: float | None = None) -> list[Record]:
-    """Ask the configured model to structure already-extracted text."""
+def extract(
+    text: str,
+    source_file: str,
+    ocr_confidence: float | None = None,
+    only: list[str] | None = None,
+) -> list[Record]:
+    """Ask the configured model to structure already-extracted text.
+
+    ``only`` names services a first pass missed. Being told which flight number
+    to look for turns an open-ended reading task into a search, which is a far
+    easier thing to get right — and it is asked only when a deterministic check
+    has proved something is absent.
+    """
     cfg = get_config()
     if not cfg.llm_api_key:
         raise LLMUnavailable(
             "No model API key. Set WAYFARE_LLM_API_KEY or write secrets/llm_api_key."
         )
 
-    payload = _call_model(text, cfg)
+    # The follow-up is kept out of `text`, which stays the evidence the reply
+    # is checked against. Otherwise the model could quote my own instruction
+    # back at me and every field in the second pass would verify itself.
+    prompt_text = text
+    if only:
+        prompt_text = (
+            f"{text}\n\n--- follow-up ---\n"
+            f"A first reading of this document missed these services: {', '.join(only)}.\n"
+            "They ARE in the text above. Return a record for each of them and for "
+            "nothing else. Look for the flight number, then read the row, block or "
+            "column it belongs to for that leg's own airports, dates and times."
+        )
+
+    payload, model = _call_model(prompt_text, cfg)
     entries = payload.get("records")
     if not isinstance(entries, list):
         return []
@@ -270,7 +301,7 @@ def extract(text: str, source_file: str, ocr_confidence: float | None = None) ->
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        record = _build_record(entry, text, source_file, ocr_confidence)
+        record = _build_record(entry, text, source_file, ocr_confidence, model)
         if record is not None:
             records.append(record)
     return records
@@ -361,7 +392,13 @@ def _attempt(model: str, text: str, cfg):
     return _parse_json(content), None
 
 
-def _call_model(text: str, cfg) -> dict:
+def _call_model(text: str, cfg) -> tuple[dict, str]:
+    """The parsed reply, and which model actually produced it.
+
+    Not the configured model: the chain falls back whenever one is rate
+    limited, so the name of the model that answered is the only one worth
+    recording on the event.
+    """
     result = modelchain.run(
         _candidates(cfg),
         lambda model: _attempt(model, text, cfg),
@@ -370,7 +407,7 @@ def _call_model(text: str, cfg) -> dict:
         fatal=(LLMUnavailable,),
     )
     if result.ok:
-        return result.value
+        return result.value, result.model
 
     hint = (
         "Free models are shared and rate-limited in bursts; this usually clears in a "
@@ -528,9 +565,30 @@ def _verify_evidence(entry: dict, source_text: str) -> tuple[set[str], set[str],
         elif field in FUZZY_FIELDS and _fuzzy_in(needle, haystack):
             supported.add(field)
             corrected.add(field)
+        elif _assembled_from(needle, haystack):
+            supported.add(field)
         else:
             unsupported.add(field)
     return supported, unsupported, corrected
+
+
+def _assembled_from(needle: str, haystack: str) -> bool:
+    """Is every part of this quote printed on the page, if not side by side?
+
+    A departure is a time in one column and a date in another, so the quote
+    "20:55 20Sep2026" is assembled rather than copied and appears nowhere as a
+    single string. Demanding it verbatim discarded the departure time, and with
+    no departure the record cannot be built at all — which is how a correctly
+    read flight vanished from a two-column ticket.
+
+    Each part must still appear exactly. This is not fuzzy matching: it relaxes
+    where the characters are, never what they are, so an invented hour or a
+    misread booking reference fails here exactly as before.
+    """
+    parts = [part for part in needle.split() if len(part) >= 2]
+    if len(parts) < 2:
+        return False  # A single token that is not present is simply absent.
+    return all(part in haystack for part in parts)
 
 
 def _parse_local(value) -> LocalTime | None:
@@ -597,7 +655,11 @@ def _flag_expanded_places(record, source_text: str) -> None:
 
 
 def _build_record(
-    entry: dict, source_text: str, source_file: str, ocr_confidence: float | None
+    entry: dict,
+    source_text: str,
+    source_file: str,
+    ocr_confidence: float | None,
+    model: str | None = None,
 ) -> Record | None:
     kind = str(entry.get("kind") or "").strip().lower()
     supported, unsupported, corrected = _verify_evidence(entry, source_text)
@@ -610,7 +672,7 @@ def _build_record(
         extractor="llm",
         source_file=source_file,
         ocr_confidence=ocr_confidence,
-        note=f"model={get_config().llm_model}",
+        model=model or get_config().llm_model,
     )
     # Every field quoted and checked against the source is the strongest signal
     # this extractor can offer. Scoring it below the promotion threshold made

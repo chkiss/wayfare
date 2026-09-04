@@ -32,7 +32,7 @@ from .schema import (
     Record,
     text_digest,
 )
-from .validate import run_all
+from .validate import completeness, run_all
 
 #: Order of authority. Earlier wins on a field-by-field conflict.
 TRUST = {"barcode": 3, "kitinerary": 2, "llm": 1, "manual": 4}
@@ -54,6 +54,42 @@ def process_file(path: Path, original_name: str | None = None, existing_events=N
 def process_text(text: str, source_name: str = "-", existing_events=None) -> Itinerary:
     """Full pipeline for a pasted snippet."""
     return _process(ingest_text(text, source_name), source_path=None, existing_events=existing_events)
+
+
+def _second_pass_for_missing_legs(
+    text: str, ingested: Ingested, candidates: list[Record], itinerary: Itinerary
+) -> list[Record]:
+    """Go back for a leg the document lists and the first reading missed.
+
+    A dropped leg is the failure that hides best: it has no fields to check, so
+    every validator passes and the itinerary looks perfect. One real receipt
+    listed two flights and produced one record, promoted at 90% confidence.
+
+    Asking again is worth it because the second question is a much easier one.
+    The first pass is open-ended reading of a jumbled two-column table; this
+    one names the flight number to find. It costs a second model call only when
+    a deterministic check has already proved something is absent.
+    """
+    missing = completeness.missing_designators(text, candidates)
+    if not missing:
+        return []
+
+    try:
+        found = llm_extractor.extract(
+            text, ingested.source_file, ingested.ocr_confidence, only=missing
+        )
+    except Exception:  # noqa: BLE001 - the warning still stands if this fails
+        return []
+
+    if found:
+        itinerary.add_issue(
+            IssueLevel.INFO,
+            "llm.second_pass",
+            f"The first reading missed {', '.join(missing)}; asking again for those "
+            f"services specifically recovered {len(found)}.",
+            "pipeline",
+        )
+    return found
 
 
 def _process(
@@ -103,6 +139,9 @@ def _process(
                 llm_extractor.extract(
                     model_text, ingested.source_file, ingested.ocr_confidence
                 )
+            )
+            candidates.extend(
+                _second_pass_for_missing_legs(model_text, ingested, candidates, itinerary)
             )
         except llm_extractor.LLMUnavailable as exc:
             itinerary.add_issue(

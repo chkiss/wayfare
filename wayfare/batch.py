@@ -26,7 +26,7 @@ from datetime import datetime
 from .pipeline import TRUST, _merge_pair
 from .render import start_local
 from .schema import FlightRecord, Itinerary, Record, TrainRecord
-from .validate import coherence
+from .validate import coherence, completeness
 
 #: Sorts a record with no usable time to the end rather than breaking the sort.
 _FAR_FUTURE = datetime.max
@@ -115,6 +115,7 @@ def combine(itineraries: list[Itinerary], existing_events: list | None = None) -
     combined.records.sort(key=_sort_key)
 
     coherence.run(combined, existing_events or [])
+    completeness.run(combined)
     for record in combined.records:
         _dedupe_issues(record)
     _dedupe_issues(combined)
