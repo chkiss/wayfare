@@ -23,6 +23,17 @@ away before a record is even built. A model that invents a departure time
 cannot produce evidence for it, so the invention is detected instead of
 believed.
 
+**Two models read every document, separately.** Quoting catches a wrong value,
+but the usual failure of a free model is an *absent* one: a flight number left
+out, a leg of a two-flight receipt skipped, occasionally a whole document
+returning nothing at all. Those readings are consistent with the source, so no
+amount of checking against the source finds them. A second model rarely drops
+the same field, so its answer fills the gap — and where the two disagree, both
+values are put in front of you rather than picked between. Agreement is the
+only positive evidence in the whole pipeline; everything else can establish
+that a record is not contradicted, which is a weaker thing. Set
+`WAYFARE_LLM_QUORUM=1` for a single reading.
+
 **Boarding pass barcodes outrank everything.** The barcode on a boarding pass
 is a fixed-width string written by the airline's own system: route, flight
 number, date, seat, booking reference. No OCR, no interpretation. When a

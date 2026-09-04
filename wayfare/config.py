@@ -103,6 +103,19 @@ class Config:
     pending_calendar_name: str = field(
         default_factory=lambda: os.environ.get("WAYFARE_PENDING_CALENDAR", "Travel (pending)")
     )
+    #: How many models read each document independently. Two is the default
+    #: because the dominant failure of a free model is an absent value rather
+    #: than a wrong one, and a second reading that did not drop the same field
+    #: fills it in. One restores single-model behaviour exactly.
+    llm_quorum: int = field(
+        default_factory=lambda: max(1, int(os.environ.get("WAYFARE_LLM_QUORUM", "2")))
+    )
+    #: How long a second opinion may keep the first one waiting. Free models
+    #: range from seconds to minutes, and a cross-check is worth some delay but
+    #: not an unbounded one.
+    llm_quorum_grace: float = field(
+        default_factory=lambda: float(os.environ.get("WAYFARE_LLM_QUORUM_GRACE", "25"))
+    )
     #: Last-resort zone for a record whose own timezone could not be resolved.
     #: Google rejects an event whose time carries no zone at all, so a held
     #: record needs *some* zone to be written to the pending calendar.

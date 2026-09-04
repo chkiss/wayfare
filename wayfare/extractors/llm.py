@@ -260,33 +260,18 @@ def status() -> dict:
     }
 
 
-def extract(
+def build_prompt(
     text: str,
-    source_file: str,
-    ocr_confidence: float | None = None,
     only: list[str] | None = None,
     expect: list[str] | None = None,
     insist: bool = False,
-) -> list[Record]:
-    """Ask the configured model to structure already-extracted text.
+) -> str:
+    """The text as the model sees it: the document, plus any direction.
 
-    ``expect`` names services found in the document by a deterministic scan
-    before this was called. Handed over as a checklist, it turns open-ended
-    reading into verification, which is a far easier thing to get right — and
-    it prevents a dropped leg rather than detecting one afterwards.
-
-    ``only`` is the same information used the other way round, after a leg was
-    dropped despite that: read this service and nothing else.
+    Kept separate from the document itself, which stays the evidence the reply
+    is checked against. Otherwise the model could quote my own instruction back
+    at me and every field in a follow-up would verify itself.
     """
-    cfg = get_config()
-    if not cfg.llm_api_key:
-        raise LLMUnavailable(
-            "No model API key. Set WAYFARE_LLM_API_KEY or write secrets/llm_api_key."
-        )
-
-    # The follow-up is kept out of `text`, which stays the evidence the reply
-    # is checked against. Otherwise the model could quote my own instruction
-    # back at me and every field in the second pass would verify itself.
     prompt_text = text
     if expect and not only:
         prompt_text = (
@@ -316,7 +301,13 @@ def extract(
             "column it belongs to for that leg's own airports, dates and times."
         )
 
-    payload, model = _call_model(prompt_text, cfg)
+    return prompt_text
+
+
+def records_from(
+    payload: dict, text: str, source_file: str, ocr_confidence: float | None, model: str
+) -> list[Record]:
+    """Turn a model's reply into records, verified against the document."""
     entries = payload.get("records")
     if not isinstance(entries, list):
         return []
@@ -329,6 +320,83 @@ def extract(
         if record is not None:
             records.append(record)
     return records
+
+
+def extract(
+    text: str,
+    source_file: str,
+    ocr_confidence: float | None = None,
+    only: list[str] | None = None,
+    expect: list[str] | None = None,
+    insist: bool = False,
+) -> list[Record]:
+    """Ask the configured model to structure already-extracted text.
+
+    ``expect`` names services found in the document by a deterministic scan
+    before this was called. Handed over as a checklist, it turns open-ended
+    reading into verification, which is a far easier thing to get right — and
+    it prevents a dropped leg rather than detecting one afterwards.
+
+    ``only`` is the same information used the other way round, after a leg was
+    dropped despite that: read this service and nothing else.
+    """
+    cfg = get_config()
+    if not cfg.llm_api_key:
+        raise LLMUnavailable(
+            "No model API key. Set WAYFARE_LLM_API_KEY or write secrets/llm_api_key."
+        )
+
+    prompt_text = build_prompt(text, only=only, expect=expect, insist=insist)
+    payload, model = _call_model(prompt_text, cfg)
+    return records_from(payload, text, source_file, ocr_confidence, model)
+
+
+def extract_with(
+    model: str,
+    text: str,
+    source_file: str,
+    ocr_confidence: float | None = None,
+    **prompt_options,
+) -> list[Record]:
+    """Ask one *named* model, with no fallback chain.
+
+    The chain exists to get an answer from somebody. This exists to get an
+    answer from a particular somebody, which is what reading a document twice
+    and comparing requires: two answers from the same model prove nothing.
+    """
+    cfg = get_config()
+    prompt_text = build_prompt(text, **prompt_options)
+
+    value, error = _attempt(model, prompt_text, cfg)
+    if error is not None:
+        raise LLMUnavailable(f"{model}: {error}")
+    return records_from(value, text, source_file, ocr_confidence, model)
+
+
+def usable_models(count: int) -> list[str]:
+    """The first `count` models worth asking, skipping any currently benched.
+
+    Searches the whole free pool rather than the short fallback chain. The
+    chain is sized for "get me one answer", and stopping there found a single
+    usable model on a day when three of the first four were benched — two on a
+    provider data policy and one rate limited — which quietly turned a quorum
+    of two back into a quorum of one.
+    """
+    cfg = get_config()
+    bench = _bench(cfg)
+
+    pool = [cfg.llm_model]
+    for identifier in free_models(cfg):
+        if identifier not in pool:
+            pool.append(identifier)
+
+    chosen = []
+    for model in pool:
+        if bench.usable(model):
+            chosen.append(model)
+        if len(chosen) >= count:
+            break
+    return chosen
 
 
 #: Statuses that mean "this model, right now" rather than "your key". 403 is

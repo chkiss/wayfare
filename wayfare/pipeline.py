@@ -20,7 +20,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from .config import get_config
 from .extractors import barcode as barcode_extractor
+from .extractors import consensus
 from .extractors import kitinerary as kitinerary_extractor
 from .extractors import llm as llm_extractor
 from . import manifest
@@ -55,6 +57,64 @@ def process_file(path: Path, original_name: str | None = None, existing_events=N
 def process_text(text: str, source_name: str = "-", existing_events=None) -> Itinerary:
     """Full pipeline for a pasted snippet."""
     return _process(ingest_text(text, source_name), source_path=None, existing_events=existing_events)
+
+
+def _read_with_models(
+    text: str, ingested: Ingested, itinerary: Itinerary, payloads: list[str]
+) -> list[Record]:
+    """Read the document, with as many models as the quorum asks for.
+
+    A quorum of one is the old behaviour exactly, chain and all. Above one, the
+    models are named and read in parallel, and their answers are reconciled —
+    which is worth the second call because the failure that costs most here is
+    a value one model simply left out.
+    """
+    expect = manifest.read(text, payloads, len(ingested.image_paths)).named
+    quorum = get_config().llm_quorum
+
+    # Before anything that touches the network: choosing models asks the
+    # provider which are free, and with no key that is a pointless request on
+    # every upload.
+    if quorum < 2 or not llm_extractor.available():
+        return llm_extractor.extract(
+            text, ingested.source_file, ingested.ocr_confidence, expect=expect
+        )
+
+    models = llm_extractor.usable_models(quorum)
+    if len(models) < 2:
+        # Everything else is benched. One reading is better than none, and the
+        # chain will report why the others are unavailable.
+        return llm_extractor.extract(
+            text, ingested.source_file, ingested.ocr_confidence, expect=expect
+        )
+
+    readings, used = consensus.read(
+        text,
+        ingested.source_file,
+        ingested.ocr_confidence,
+        models,
+        llm_extractor.extract_with,
+        grace_seconds=get_config().llm_quorum_grace,
+        expect=expect,
+    )
+
+    if not readings:
+        # Every named model failed. Fall back to the chain, which knows how to
+        # bench them and how to keep going.
+        return llm_extractor.extract(
+            text, ingested.source_file, ingested.ocr_confidence, expect=expect
+        )
+
+    if len(readings) < len(models):
+        itinerary.add_issue(
+            IssueLevel.INFO,
+            "consensus.partial",
+            f"{len(readings)} of {len(models)} models answered; "
+            "the reading was not cross-checked.",
+            "pipeline",
+        )
+
+    return consensus.reconcile(readings, used)
 
 
 def _second_pass_for_nothing_at_all(
@@ -184,14 +244,7 @@ def _process(
             # model then has a checklist rather than an open-ended page, which
             # is what stops a leg being dropped instead of catching it after.
             candidates.extend(
-                llm_extractor.extract(
-                    model_text,
-                    ingested.source_file,
-                    ingested.ocr_confidence,
-                    expect=manifest.read(
-                        model_text, payloads, len(ingested.image_paths)
-                    ).named,
-                )
+                _read_with_models(model_text, ingested, itinerary, payloads)
             )
             candidates.extend(
                 _second_pass_for_missing_legs(

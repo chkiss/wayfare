@@ -153,7 +153,14 @@ class BaseRecord(BaseModel):
 
     #: Findings that positively confirm a record rather than merely failing to
     #: contradict it. Each one earns a little confidence.
-    CONFIRMATIONS: ClassVar[set[str]] = {"leg.block_time_ok", "flight.schedule_confirmed"}
+    CONFIRMATIONS: ClassVar[set[str]] = {
+        "leg.block_time_ok",
+        "flight.schedule_confirmed",
+        # Two models reading the document separately and agreeing is the only
+        # positive evidence available here. Everything else can establish that
+        # a record is not contradicted, which is a weaker thing.
+        "consensus.models_agree",
+    }
 
     def confidence(self) -> float:
         """Overall confidence after validation.
