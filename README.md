@@ -1,7 +1,7 @@
 # wayfare
 
 Feed it a screenshot of a booking confirmation, a PDF, a boarding pass or a
-pasted email, and it puts the flight, train or hotel on your Google Calendar —
+pasted email, and it puts the flight, train or hotel on your Google Calendar,
 after checking that what it read is actually possible.
 
 Plenty of tools will hand a booking document to a language model and write
@@ -11,35 +11,37 @@ trust without looking twice.
 
 ## How it avoids putting a wrong time in your calendar
 
-**The model never reads anything.** Text extraction is done by `tesseract` and
-`pdftotext`, which give the same answer every time and report a per-word
-confidence. The model's only job is to say which parts of that text are a
-flight and which are a hotel. That is a job a small free model does reliably.
+**The model never reads the document.** `tesseract` and `pdftotext` extract the
+text, give the same answer every time, and report a per-word confidence. The
+model's only job is to say which parts of that text are a flight and which are a
+hotel. A small free model does that reliably.
 
 **Every value must be quoted from the source.** For each field it fills in, the
 model has to return the exact substring it took the value from. Each quote is
-checked against the extracted text, and any field it cannot quote is thrown
-away before a record is even built. A model that invents a departure time
-cannot produce evidence for it, so the invention is detected instead of
-believed.
+checked against the extracted text, and any field it cannot quote is thrown away
+before a record is even built. A model that invents a departure time cannot
+produce evidence for it, so the invention never reaches your calendar.
 
-**Two models read every document, separately.** Quoting catches a wrong value,
-but the usual failure of a free model is an *absent* one: a flight number left
-out, a leg of a two-flight receipt skipped, occasionally a whole document
-returning nothing at all. Those readings are consistent with the source, so no
-amount of checking against the source finds them. A second model rarely drops
-the same field, so its answer fills the gap — and where the two disagree, both
-values are put in front of you rather than picked between. Agreement is the
-only positive evidence in the whole pipeline; everything else can establish
-that a record is not contradicted, which is a weaker thing. Set
-`WAYFARE_LLM_QUORUM=1` for a single reading.
+**Every document is read twice.** Quoting catches a wrong value, but the usual
+failure of a free model is an *absent* one: a flight number left out, a leg of a
+two-flight receipt skipped, occasionally a whole document returning nothing at
+all. Those readings are consistent with the source, so no amount of checking
+against the source finds them. A second reading rarely drops the same field, so
+its answer fills the gap, and where the two disagree both values are put in
+front of you rather than picked between. Agreement is the only positive evidence
+in the pipeline; every other check can establish only that a record is not
+contradicted.
 
-**Boarding pass barcodes outrank everything.** The barcode on a boarding pass
-is a fixed-width string written by the airline's own system: route, flight
-number, date, seat, booking reference. No OCR, no interpretation. When a
-barcode is present it becomes the reference the rest of the document is
-checked against, and any disagreement is reported rather than resolved
-silently.
+The two readings come from different models when the backend has two to spare.
+On a free tier it is usually one model asked twice, which catches the same
+failure, because these models are not deterministic even at temperature zero.
+The event says which. Set `WAYFARE_LLM_QUORUM=1` for a single reading.
+
+**Boarding pass barcodes outrank everything.** The barcode on a boarding pass is
+a fixed-width string written by the airline's own system: route, flight number,
+date, seat, booking reference. No OCR, no interpretation. When a barcode is
+present it becomes the reference the rest of the document is checked against,
+and any disagreement is reported rather than resolved silently.
 
 **The itinerary has to be physically possible.** Airport coordinates and
 timezones come from the OurAirports database, offline. From those, the tool
@@ -48,29 +50,29 @@ misread hour, a swapped am/pm, a wrong timezone, or origin and destination read
 backwards all produce a duration that no aircraft flies, and get caught with no
 API and no network.
 
-**The records have to agree with each other.** Check-in before you land.
-Check-out after you have flown home. A connection that departs before the
-previous leg arrives. A hotel stay that runs for eleven months because a year
+**The records have to agree with each other.** A check-in before you land, a
+check-out after you have flown home, a connection that departs before the
+previous leg arrives, a hotel stay that runs for eleven months because a year
 was misread. None of these can be caught by looking at one document, so the
 records are compared to each other and to what is already on your calendar.
 
 **Nothing is written irreversibly.** Every event is created on a separate
 "Travel (pending)" calendar first. Anything that passes every check is moved to
-your real calendar automatically; anything with a warning stays in pending
-until you tap confirm. Every write is logged with its event id, so
-`wayfare undo` reverses it.
+your real calendar automatically; anything with a warning stays in pending until
+you tap confirm. Every write is logged with its event id, so `wayfare undo`
+reverses it.
 
 ## What it costs to run
 
 Nothing, and it stays that way. OCR, barcode decoding, the airport database and
 every validator are local and free. The one component that talks to a paid-ish
-service is the model backend, which is an OpenAI-compatible endpoint you
-choose. A free tier is adequate, because the model is only classifying text
-that a deterministic tool already extracted.
+service is the model backend, which is an OpenAI-compatible endpoint you choose.
+A free tier is adequate, because the model is only classifying text that a
+deterministic tool already extracted.
 
 The live flight-schedule check is the exception, and it is optional. Turned on,
-it confirms that the flight number really does fly at that time. Turned off
-(the default), everything else still works.
+it confirms that the flight number really does fly at that time. Turned off (the
+default), everything else still works.
 
 ## Install
 
@@ -97,12 +99,12 @@ wayfare serve --port 8791     # then open http://127.0.0.1:8791/setup
 ```
 
 That page also takes the model API key, links to OpenRouter's key page, and
-makes one real request to prove the key works before calling it set up — a key
+makes one real request to prove the key works before calling it set up. A key
 that is merely *present* proves nothing, and finding out it was revoked while
 reading a boarding pass at an airport is too late.
 
-Google insists that every app use its own OAuth client, so the two Console
-steps cannot be automated away. Everything after them can, and is.
+Google insists that every app use its own OAuth client, so the two Console steps
+cannot be automated away. Everything after them is.
 
 If you would rather stay in the terminal, `wayfare auth` does the same thing
 with a Desktop-type client.
@@ -153,7 +155,7 @@ unit in [`deploy/wayfare.service`](deploy/wayfare.service).
 
 ## Letting an agent operate it
 
-The HTTP API has two privilege levels, and the difference matters.
+The HTTP API has two privilege levels.
 
 The **agent token** can do exactly one thing: submit a document and read back
 what happened to it. It cannot promote an event to your real calendar, cannot
@@ -166,9 +168,9 @@ curl -H "Authorization: Bearer $WAYFARE_AGENT_TOKEN" \
      https://wayfare.example.com/api/v1/ingest
 ```
 
-Repeat `upload` to send a whole trip at once. It is worth doing: a hotel booked
-for the wrong month looks fine on its own and only contradicts something when
-the flights are checked alongside it.
+Repeat `upload` to send a whole trip at once. A hotel booked for the wrong month
+looks fine on its own and only contradicts something when the flights are
+checked alongside it.
 
 The **owner token** can do everything, including promote and undo.
 
@@ -179,14 +181,14 @@ some junk events in a calendar you can delete, and nothing else. See
 
 ## Calendar conventions
 
-Titles and descriptions are personal taste, so they live in one JSON file
-rather than in the code. Copy `conventions.example.json` somewhere outside the
-repo and point `WAYFARE_CONVENTIONS` at it. Nothing personal is ever committed:
-no itinerary, no address, no booking reference, no credential.
+Titles and descriptions are personal taste, so they live in one JSON file rather
+than in the code. Copy `conventions.example.json` somewhere outside the repo and
+point `WAYFARE_CONVENTIONS` at it. Nothing personal is ever committed: no
+itinerary, no address, no booking reference, no credential.
 
-Better than editing it by hand: let the tool read how you already do it.
-Export your calendar from Google Calendar (Settings → Import & export → Export)
-and point `learn` at the download.
+You can also let the tool read how you already do it, instead of editing the
+file by hand. Export your calendar from Google Calendar (Settings → Import &
+export → Export) and point `learn` at the download.
 
 ```sh
 wayfare learn ~/Downloads/calendar-export.zip --write ~/.config/wayfare/conventions.json
@@ -212,9 +214,9 @@ convention. The export never leaves your machine.
 
 The model fallback policy — which failures are temporary, which need a person,
 and how long to stay away — lives in
-[modelchain](https://github.com/chkiss/modelchain) and is vendored here as a
-git subtree at `wayfare/vendor`, so this repo clones and runs with nothing to
-fetch. Update it with:
+[modelchain](https://github.com/chkiss/modelchain) and is vendored here as a git
+subtree at `wayfare/vendor`, so this repo clones and runs with nothing to fetch.
+Update it with:
 
 ```sh
 git remote add modelchain https://github.com/chkiss/modelchain.git

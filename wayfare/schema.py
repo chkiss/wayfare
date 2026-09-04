@@ -16,7 +16,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, ClassVar, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 
 class Kind(str, Enum):
@@ -139,6 +139,12 @@ class BaseRecord(BaseModel):
     #: Extractor's own 0..1 confidence, before validation.
     extraction_confidence: float = 0.5
     issues: list[Issue] = Field(default_factory=list)
+    #: Values two readings disagreed about and the model could not settle,
+    #: each with the alternatives on offer. Carried on the record so the
+    #: review page can offer the choice: a disagreement the tool cannot
+    #: resolve is a question for the person holding the ticket, and a warning
+    #: they can only read is a worse answer than one they can act on.
+    disputes: list[dict] = Field(default_factory=list)
 
     def add_issue(self, level: IssueLevel, code: str, message: str, source: str) -> None:
         self.issues.append(Issue(level=level, code=code, message=message, source=source))
@@ -245,6 +251,13 @@ Record = Annotated[
     Union[FlightRecord, TrainRecord, LodgingRecord, OtherRecord],
     Field(discriminator="kind"),
 ]
+
+
+#: Rebuilds a stored record from its saved fields, picking the class by kind.
+#: What makes a correction after the fact a real re-render — the title, the
+#: description and the iCalendar text all come back out of the same code that
+#: produced them the first time — rather than an edit of the rendered strings.
+RecordAdapter: TypeAdapter = TypeAdapter(Record)
 
 
 class Itinerary(BaseModel):

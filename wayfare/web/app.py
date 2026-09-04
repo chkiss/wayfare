@@ -16,9 +16,11 @@ sitting in a quarantine calendar.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
@@ -28,7 +30,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .. import batch, staging, store
+from .. import batch, progress, staging, store
 from ..calendar_api import (
     CalendarClient,
     CalendarError,
@@ -353,12 +355,20 @@ async def submit_form(
     upload: list[UploadFile] = File(default_factory=list),
     staged: list[str] = Form(default_factory=list),
     text: str = Form(""),
+    background: str = Form(""),
 ):
     session = _staging_session(request)
     try:
         held = staging.collect(session, staged) if session and staged else []
     except ValueError:
         held = []
+
+    if background:
+        # The page will watch this and say what stage it is at. Reading a
+        # batch is mostly spent waiting on free models, and a browser given
+        # nothing to show says "Sending request", which is both finished and
+        # unhelpful.
+        return await _submit_in_background(request, upload, text, held, session)
 
     try:
         submission = await _run_submission(upload, text, allow_promote=True, staged=held)
@@ -379,6 +389,93 @@ async def submit_form(
     return response
 
 
+class _Held:
+    """An already-materialised input, in the shape `_run_submission` expects."""
+
+    def __init__(self, path: Path, name: str) -> None:
+        self.path = path
+        self.name = name
+
+
+async def _submit_in_background(request, uploads, text: str, held: list, session: str):
+    """Take the batch now, work on it in a thread, and hand back a job to watch.
+
+    The files have to be read here, while the request is still open: the
+    browser's connection closes as soon as this returns, and its temporary
+    files go with it.
+    """
+    files = [f for f in uploads if f is not None and f.filename]
+    workdir: Path | None = None
+    items = list(held)
+
+    if files:
+        workdir = Path(tempfile.mkdtemp(prefix="wayfare-job-"))
+        for upload in files:
+            payload = await upload.read()
+            if len(payload) > MAX_UPLOAD_BYTES:
+                shutil.rmtree(workdir, ignore_errors=True)
+                raise HTTPException(status_code=413, detail=f"'{upload.filename}' is too large.")
+            path = workdir / Path(upload.filename).name
+            path.write_bytes(payload)
+            items.append(_Held(path, upload.filename))
+
+    if not items and not text.strip():
+        if workdir:
+            shutil.rmtree(workdir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="Send at least one file, or some text.")
+
+    job = progress.start(total=len(items) + (1 if text.strip() else 0))
+
+    def work() -> None:
+        token = progress.bind(job)
+        try:
+            submission = asyncio.run(
+                _run_submission([], text, allow_promote=True, staged=items)
+            )
+            progress.finish(job, submission.submission_id)
+            if session:
+                staging.clear(session)
+        except HTTPException as exc:
+            progress.fail(job, str(exc.detail), exc.status_code)
+        except NotAuthorised as exc:
+            progress.fail(job, str(exc), 503)
+        except Exception as exc:  # noqa: BLE001 - reported to the page, not swallowed
+            progress.fail(job, f"{type(exc).__name__}: {exc}")
+        finally:
+            progress.unbind(token)
+            if workdir:
+                shutil.rmtree(workdir, ignore_errors=True)
+
+    threading.Thread(target=work, daemon=True).start()
+    return JSONResponse({"job": job.id})
+
+
+@app.get("/progress/{job_id}")
+def job_progress(job_id: str, scope: Scope = Depends(require_owner)):
+    """What the tool is doing right now, for the page that is waiting on it."""
+    job = progress.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such job.")
+    return JSONResponse(job.to_dict())
+
+
+@app.get("/submissions/{submission_id}", response_class=HTMLResponse)
+def submission_page(
+    request: Request, submission_id: str, scope: Scope = Depends(require_owner)
+):
+    """The result of a submission, by id.
+
+    Needed because a batch read in the background has no POST to respond to;
+    it also means a result can be reopened rather than only ever glimpsed.
+    """
+    data = store.load(submission_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="No such submission.")
+    response = TEMPLATES.TemplateResponse(request, "result.html", {"submission": data})
+    response.delete_cookie("wayfare_batch")
+    return response
+
+
 @app.post("/submissions/{submission_id}/records/{index}/{action}")
 def review_action(
     submission_id: str,
@@ -389,9 +486,13 @@ def review_action(
     start: str = Form(""),
     end: str = Form(""),
     then_promote: str = Form(""),
+    field: str = Form(""),
+    value: str = Form(""),
 ):
     try:
-        if action == "promote":
+        if action == "choose":
+            store.resolve_dispute(submission_id, index, field, value)
+        elif action == "promote":
             store.promote(submission_id, index)
         elif action == "discard":
             store.discard(submission_id, index)
@@ -405,6 +506,9 @@ def review_action(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if action == "choose":
+        # Back to the record, where the next question probably is.
+        return RedirectResponse(f"/submissions/{submission_id}", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 

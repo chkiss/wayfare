@@ -20,7 +20,7 @@ from .calendar_api import CalendarClient
 from .config import get_config
 from .icswrite import record_to_ics
 from .render import event_summary, load_conventions, to_google_events
-from .schema import Itinerary, Record
+from .schema import Itinerary, Record, RecordAdapter
 
 
 @dataclass
@@ -38,6 +38,13 @@ class RecordOutcome:
     #: the one place a reviewer can read it end to end and paste elsewhere —
     #: the summary line alone hides the times, zones, location and reminders.
     ics: str = ""
+    #: Values two readings disagreed about that nothing could settle, offered
+    #: to the reviewer as a choice rather than only as a warning.
+    disputes: list[dict] = field(default_factory=list)
+    #: The record as the pipeline concluded it. Kept so a correction made
+    #: later is re-rendered by the code that rendered it first, instead of
+    #: being patched into the finished strings.
+    record: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +55,8 @@ class RecordOutcome:
             "event_ids": self.event_ids,
             "issues": self.issues,
             "ics": self.ics,
+            "disputes": self.disputes,
+            "record": self.record,
         }
 
 
@@ -157,6 +166,8 @@ def commit(
             reason=reason,
             issues=[i.model_dump(mode="json") for i in record.issues],
             ics=record_to_ics(record, conventions, uid_seed=submission.submission_id),
+            disputes=[dict(d) for d in record.disputes],
+            record=record.model_dump(mode="json"),
         )
 
         if status != "rejected" and not dry_run and client is not None:
@@ -368,6 +379,96 @@ def amend(
         json.dumps(data, indent=2), encoding="utf-8"
     )
     return record
+
+
+def resolve_dispute(
+    submission_id: str,
+    index: int,
+    field_name: str,
+    value: str,
+    client: CalendarClient | None = None,
+) -> dict:
+    """Settle a disagreement the readings and the model both left open.
+
+    The last resort, and the only one with a person in it. Two readings
+    differed, the model that read the document could not point to a line that
+    decided it, so the question goes to whoever is holding the ticket — who
+    can simply look.
+
+    The choice is restricted to the values that were actually offered. This is
+    a tie-break between two readings of a document, not a free text field, and
+    a value neither reading produced would have no evidence behind it at all.
+    """
+    cfg = get_config()
+    data = load(submission_id)
+    if data is None:
+        raise KeyError(f"No such submission: {submission_id}")
+    try:
+        stored = data["records"][index]
+    except (IndexError, KeyError) as exc:
+        raise KeyError(f"No record {index} in submission {submission_id}") from exc
+
+    dispute = next(
+        (d for d in stored.get("disputes", []) if d.get("field") == field_name), None
+    )
+    if dispute is None:
+        raise AmendError(f"Nothing was disputed about {field_name}.")
+    if value not in dispute.get("values", []):
+        raise AmendError("That was not one of the readings on offer.")
+    if not stored.get("record"):
+        raise AmendError("This record was saved before choices could be applied.")
+
+    record = RecordAdapter.validate_python(stored["record"])
+    holder = record
+    *path, attribute = field_name.split(".")
+    for step in path:
+        holder = getattr(holder, step, None)
+        if holder is None:
+            raise AmendError(f"{field_name} is not part of this record any more.")
+    setattr(holder, attribute, value)
+
+    # Re-rendered rather than patched: the title, the location and the
+    # description are all derived from this field, and editing the finished
+    # strings would leave them disagreeing with each other.
+    conventions = load_conventions()
+    stored["summary"] = event_summary(record, conventions)
+    stored["ics"] = record_to_ics(record, conventions, uid_seed=submission_id)
+    stored["record"] = record.model_dump(mode="json")
+    dispute["chosen"] = value
+
+    if all(d.get("chosen") for d in stored.get("disputes", [])):
+        # Every open question answered; the warning that asked them is spent.
+        stored["issues"] = [
+            issue
+            for issue in stored.get("issues", [])
+            if issue.get("code") != "consensus.models_disagree"
+        ]
+    stored["edited"] = True
+
+    event_ids = stored.get("event_ids", [])
+    if event_ids:
+        client = client or CalendarClient()
+        calendar_id = (
+            client.target_calendar_id()
+            if stored["status"] == "promoted"
+            else client.pending_calendar_id()
+        )
+        bodies = to_google_events(record, conventions)
+        for event_id, body in zip(event_ids, bodies):
+            client.patch(
+                event_id,
+                calendar_id,
+                {
+                    key: body[key]
+                    for key in ("summary", "location", "description")
+                    if key in body
+                },
+            )
+
+    (cfg.records_dir / f"{submission_id}.json").write_text(
+        json.dumps(data, indent=2), encoding="utf-8"
+    )
+    return stored
 
 
 def _normalise_local(value: str) -> str | None:

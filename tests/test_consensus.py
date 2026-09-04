@@ -191,7 +191,7 @@ def test_both_models_are_asked():
         asked.append(model)
         return [flight(model=model)]
 
-    readings, used = consensus.read("text", "f.pdf", None, MODELS, fake)
+    readings, used, _ = consensus.read("text", "f.pdf", None, MODELS, fake)
     assert sorted(asked) == ["a:free", "b:free"]
     assert len(readings) == 2 and used == MODELS
 
@@ -202,7 +202,7 @@ def test_one_model_failing_does_not_lose_the_other():
             raise RuntimeError("rate limited")
         return [flight(model=model)]
 
-    readings, used = consensus.read("text", "f.pdf", None, MODELS, fake)
+    readings, used, _ = consensus.read("text", "f.pdf", None, MODELS, fake)
     assert len(readings) == 1 and used == ["b:free"]
 
 
@@ -216,7 +216,7 @@ def test_a_slow_second_opinion_does_not_hold_up_the_first():
         return [flight(model=model)]
 
     started = _time.monotonic()
-    readings, used = consensus.read(
+    readings, used, _ = consensus.read(
         "text", "f.pdf", None, MODELS, fake, grace_seconds=0.3
     )
     elapsed = _time.monotonic() - started
@@ -237,7 +237,7 @@ def test_the_window_is_scaled_to_how_fast_the_first_answer_was():
         return [flight(model=model)]
 
     started = _time.monotonic()
-    readings, used = consensus.read(
+    readings, used, _ = consensus.read(
         "text", "f.pdf", None, MODELS, fake, grace_seconds=25
     )
     elapsed = _time.monotonic() - started
@@ -255,7 +255,7 @@ def test_a_second_opinion_inside_the_window_is_used():
             _time.sleep(0.2)
         return [flight(model=model)]
 
-    readings, used = consensus.read("text", "f.pdf", None, MODELS, fake, grace_seconds=5)
+    readings, used, _ = consensus.read("text", "f.pdf", None, MODELS, fake, grace_seconds=5)
     assert sorted(used) == ["a:free", "b:free"]
     assert len(readings) == 2
 
@@ -269,7 +269,7 @@ def test_a_spare_stands_in_for_a_model_that_refuses():
             raise RuntimeError("429 rate limited")
         return [flight(model=model)]
 
-    readings, used = consensus.read(
+    readings, used, _ = consensus.read(
         "text", "f.pdf", None, ["a:free", "b:free", "c:free"], fake, want=2
     )
     assert sorted(used) == ["b:free", "c:free"]
@@ -283,7 +283,7 @@ def test_spares_are_abandoned_once_enough_have_answered():
         asked.append(model)
         return [flight(model=model)]
 
-    _, used = consensus.read(
+    _, used, _ = consensus.read(
         "text", "f.pdf", None, ["a:free", "b:free", "c:free", "d:free"], fake, want=2
     )
     assert len(used) == 2
@@ -312,3 +312,112 @@ def test_a_single_reading_is_returned_unchanged():
 
 def test_no_readings_at_all_is_not_a_crash():
     assert consensus.reconcile([], []) == []
+
+
+# --- letting the reader settle what the readings could not --------------
+
+
+def _disputed_pair():
+    """The measured case: the same station, named two ways."""
+    short = flight(destination=Place(iata="JFK", city="New York", name="John F Kennedy"))
+    full = flight(
+        destination=Place(
+            iata="JFK", city="New York", name="John F. Kennedy International Airport"
+        )
+    )
+    return short, full
+
+
+CONVERSATION = {"prompt": "...", "reply": {"records": []}}
+SOURCE = "Depart John F. Kennedy International Airport at 12:58"
+
+
+def test_the_model_settles_a_disagreement_it_can_quote(monkeypatch):
+    """A disagreement the document answers should not become the user's problem."""
+    asked = {}
+
+    def fake_adjudicate(model, conversation, disputes, source_text):
+        asked["model"] = model
+        asked["fields"] = [d["field"] for d in disputes]
+        return {"destination.name": "John F. Kennedy International Airport"}
+
+    monkeypatch.setattr(consensus.llm_extractor, "adjudicate", fake_adjudicate)
+
+    (record,) = consensus.reconcile(
+        [list(pair) for pair in ([_disputed_pair()[0]], [_disputed_pair()[1]])],
+        MODELS,
+        source_text=SOURCE,
+        conversation=CONVERSATION,
+        adjudicator="a:free",
+    )
+
+    assert record.destination.name == "John F. Kennedy International Airport"
+    assert asked["model"] == "a:free"
+    assert asked["fields"] == ["destination.name"]
+    codes = [i.code for i in record.issues]
+    assert "consensus.resolved_by_model" in codes
+    assert "consensus.models_disagree" not in codes
+    assert not record.disputes
+
+
+def test_a_dispute_the_model_will_not_settle_is_offered_to_the_user(monkeypatch):
+    """The fallback: a question the tool cannot answer is one a person can."""
+    monkeypatch.setattr(
+        consensus.llm_extractor, "adjudicate", lambda *a, **k: {}
+    )
+    short, full = _disputed_pair()
+
+    (record,) = consensus.reconcile(
+        [[short], [full]],
+        MODELS,
+        source_text=SOURCE,
+        conversation=CONVERSATION,
+        adjudicator="a:free",
+    )
+
+    assert "consensus.models_disagree" in [i.code for i in record.issues]
+    (dispute,) = record.disputes
+    assert dispute["field"] == "destination.name"
+    assert set(dispute["values"]) == {
+        "John F Kennedy",
+        "John F. Kennedy International Airport",
+    }
+
+
+def test_an_adjudicator_that_fails_leaves_the_dispute_standing(monkeypatch):
+    """A model erroring mid-adjudication must not lose the record."""
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("rate limited")
+
+    monkeypatch.setattr(consensus.llm_extractor, "adjudicate", explode)
+    short, full = _disputed_pair()
+
+    (record,) = consensus.reconcile(
+        [[short], [full]], MODELS, source_text=SOURCE,
+        conversation=CONVERSATION, adjudicator="a:free",
+    )
+    assert record.disputes
+
+
+def test_nothing_is_adjudicated_without_a_conversation(monkeypatch):
+    """With no exchange to continue there is nobody to ask, and no call to make."""
+
+    def explode(*args, **kwargs):
+        raise AssertionError("should not have asked anyone")
+
+    monkeypatch.setattr(consensus.llm_extractor, "adjudicate", explode)
+    short, full = _disputed_pair()
+
+    (record,) = consensus.reconcile([[short], [full]], MODELS)
+    assert record.disputes
+
+
+def test_a_disputed_time_is_never_offered_as_a_text_choice():
+    """A rendered datetime cannot be put back on a record, so it stays a warning."""
+    early = flight(departure=LocalTime(local=datetime(2026, 9, 27, 9, 55)))
+    late = flight(departure=LocalTime(local=datetime(2026, 9, 27, 19, 55)))
+
+    (record,) = consensus.reconcile([[early], [late]], MODELS)
+    assert "consensus.models_disagree" in [i.code for i in record.issues]
+    assert not record.disputes

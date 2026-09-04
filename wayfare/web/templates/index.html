@@ -69,6 +69,13 @@
   <p style="margin:1rem 0 .35rem"><label for="text">…and/or paste the confirmation text</label></p>
   <textarea id="text" name="text" placeholder="Paste a booking confirmation here."></textarea>
   <p class="row" style="margin-top:.85rem"><button type="submit">Generate iCals</button></p>
+
+  {# Filled in by script while the server works. Hidden, and never shown at
+     all, if the plain form post is what happens. #}
+  <div id="working" class="working" hidden>
+    <span class="spinner" aria-hidden="true"></span>
+    <span class="phase" role="status" aria-live="polite">Working</span>
+  </div>
 </form>
 
 <hr class="divider">
@@ -327,6 +334,73 @@
       })
       .catch(() => {});
   });
+
+  // Submitting is where the wait actually is: the upload finished while the
+  // user was still choosing, and everything after the button is OCR and free
+  // models. Left to itself the browser shows "Sending request" for all of it,
+  // which describes the one part that is already over. So the batch is posted
+  // in the background and the server is asked, twice a second, what stage it
+  // has reached.
+  //
+  // If any of this fails — no fetch, a refused poll, a browser that never runs
+  // the script — the form still posts normally and the wait is merely silent
+  // again, which is where it started.
+  const status = document.getElementById("working");
+  if (window.fetch && status) {
+    form.addEventListener("submit", (event) => {
+      if (form.dataset.plain) return;
+      event.preventDefault();
+
+      const body = new FormData(form);
+      body.append("background", "1");
+      submit.disabled = true;
+      status.hidden = false;
+      say("Sending the batch");
+
+      fetch("/submit", { method: "POST", body })
+        .then((response) => (response.ok ? response.json() : Promise.reject(response)))
+        .then((job) => watch(job.job))
+        .catch(() => {
+          // Fall back to the ordinary form post rather than stranding anyone.
+          form.dataset.plain = "1";
+          status.hidden = true;
+          submit.disabled = false;
+          form.submit();
+        });
+    });
+  }
+
+  function say(phase) {
+    status.querySelector(".phase").textContent = phase;
+  }
+
+  function watch(id) {
+    const poll = () => {
+      fetch("/progress/" + encodeURIComponent(id))
+        .then((response) => (response.ok ? response.json() : Promise.reject(response)))
+        .then((job) => {
+          if (job.error) {
+            say(job.error);
+            status.classList.add("failed");
+            submit.disabled = false;
+            return;
+          }
+          if (job.done && job.submission_id) {
+            say("Done");
+            window.location = "/submissions/" + job.submission_id;
+            return;
+          }
+          say(job.phase);
+          setTimeout(poll, 500);
+        })
+        .catch(() => {
+          say("Lost contact with the server while it was working.");
+          status.classList.add("failed");
+          submit.disabled = false;
+        });
+    };
+    poll();
+  }
 
   ready();
 })();

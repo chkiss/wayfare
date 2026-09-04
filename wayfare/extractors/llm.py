@@ -28,6 +28,7 @@ from difflib import SequenceMatcher
 
 import httpx
 
+from ..airports import get_airport_db
 from ..config import get_config
 from ..vendor import modelchain
 from ..schema import (
@@ -364,13 +365,124 @@ def extract_with(
     answer from a particular somebody, which is what reading a document twice
     and comparing requires: two answers from the same model prove nothing.
     """
+    records, _ = read_with(model, text, source_file, ocr_confidence, **prompt_options)
+    return records
+
+
+def read_with(
+    model: str,
+    text: str,
+    source_file: str,
+    ocr_confidence: float | None = None,
+    **prompt_options,
+) -> tuple[list[Record], dict]:
+    """As `extract_with`, but also handing back what the model actually replied.
+
+    The reply is kept so a later question can be asked *in the same
+    conversation* — the model that read the document is the one worth asking
+    which of two readings of it is right, and it can only answer that usefully
+    while it still has the document and its own answer in front of it.
+    """
     cfg = get_config()
     prompt_text = build_prompt(text, **prompt_options)
 
     value, error = _attempt(model, prompt_text, cfg)
     if error is not None:
         raise LLMUnavailable(f"{model}: {error}")
-    return records_from(value, text, source_file, ocr_confidence, model)
+    return (
+        records_from(value, text, source_file, ocr_confidence, model),
+        {"prompt": prompt_text, "reply": value},
+    )
+
+
+def adjudicate(
+    model: str, conversation: dict, disputes: list[dict], source_text: str
+) -> dict[str, str]:
+    """Ask the model that read the document which of two readings of a field is right.
+
+    Where two readings differ, one of them is right and the document says
+    which. That is a reading question, and the model already holding the
+    document is better placed to answer it than any rule I could write: a
+    tie-break on string length would have preferred "Kissick Charles Mr (ADT)"
+    over the traveller's actual name, and one on quote count would have
+    preferred whichever reading was more talkative.
+
+    The question is asked as a continuation of the original exchange, so the
+    model answers with the document and its own first answer in view.
+
+    Two things constrain the reply. It may only pick from the values it is
+    offered, never supply a third, so this cannot become a fresh chance to
+    invent. And every choice is returned for the caller to verify against the
+    source exactly as any other value is. Anything else is ignored, which
+    leaves the dispute standing for a person to settle.
+    """
+    if not disputes:
+        return {}
+
+    cfg = get_config()
+    lines = []
+    for dispute in disputes:
+        options = " | ".join(f'"{option}"' for option in dispute["values"])
+        lines.append(f'- {dispute["field"]}: {options}')
+
+    question = (
+        "Two independent readings of that same source text disagreed about the "
+        "fields below. For each one, say which of the offered values the source "
+        "text actually supports.\n\n"
+        + "\n".join(lines)
+        + '\n\nReply with JSON only: {"choices": {"<field>": "<the value you chose>", '
+        '...}, "evidence": {"<field>": "<the exact substring of the source text '
+        'that decides it>"}}\n'
+        "Copy the chosen value character for character from the options offered. "
+        "Do not offer a third value, do not merge two of them, and leave out any "
+        "field the source text does not settle."
+    )
+
+    messages = _messages(conversation["prompt"]) + [
+        {"role": "assistant", "content": json.dumps(conversation["reply"])},
+        {"role": "user", "content": question},
+    ]
+
+    value, error = _attempt(model, "", cfg, messages=messages)
+    if error is not None or not isinstance(value, dict):
+        return {}
+
+    choices = value.get("choices")
+    evidence = value.get("evidence")
+    if not isinstance(choices, dict):
+        return {}
+
+    offered = {dispute["field"]: dispute["values"] for dispute in disputes}
+    picked: dict[str, str] = {}
+    for field, chosen in choices.items():
+        if not isinstance(chosen, str) or field not in offered:
+            continue
+        # Only ever one of the two readings already on the table.
+        for option in offered[field]:
+            if str(option).strip().casefold() == chosen.strip().casefold():
+                picked[field] = option
+                break
+
+    # The adjudicator is held to the evidence rule like any other reading. A
+    # ruling it cannot point to a line of the document for is an opinion, and
+    # the dispute is better left to a person than settled by one.
+    if not isinstance(evidence, dict):
+        return {}
+
+    haystack = _normalise(source_text)
+    return {
+        field: chosen
+        for field, chosen in picked.items()
+        if _quote_holds(evidence.get(field), haystack)
+    }
+
+
+def _quote_holds(quote, haystack: str) -> bool:
+    """Is this quote actually on the page, allowing for OCR noise?"""
+    if not isinstance(quote, str) or not quote.strip():
+        return False
+    needle = _normalise(quote)
+    return needle in haystack or _fuzzy_in(needle, haystack) or _assembled_from(needle, haystack)
 
 
 def usable_models(count: int) -> list[str]:
@@ -405,7 +517,15 @@ def usable_models(count: int) -> list[str]:
 RETRYABLE = {403, 408, 429, 500, 502, 503, 504}
 
 
-def _post(model: str, text: str, cfg) -> httpx.Response:
+def _messages(text: str) -> list[dict]:
+    """The opening exchange: the standing instructions, then the document."""
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Source text:\n\n{text}"},
+    ]
+
+
+def _post(model: str, text: str, cfg, messages: list[dict] | None = None) -> httpx.Response:
     return httpx.post(
         f"{cfg.llm_base_url.rstrip('/')}/chat/completions",
         headers={
@@ -415,10 +535,7 @@ def _post(model: str, text: str, cfg) -> httpx.Response:
         json={
             "model": model,
             "temperature": 0,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Source text:\n\n{text}"},
-            ],
+            "messages": messages if messages is not None else _messages(text),
         },
         timeout=cfg.llm_timeout,
     )
@@ -460,10 +577,10 @@ class _Failure(str):
         return failure
 
 
-def _attempt(model: str, text: str, cfg):
+def _attempt(model: str, text: str, cfg, messages: list[dict] | None = None):
     """One model, reported the way modelchain expects: (value, error)."""
     try:
-        response = _post(model, text, cfg)
+        response = _post(model, text, cfg, messages=messages)
     except Exception as exc:  # noqa: BLE001 - the next model may work
         return None, f"{type(exc).__name__}: {exc}"
 
@@ -560,6 +677,22 @@ FUZZY_FIELDS = {
     "operator",
     "traveller",
     "title",
+}
+
+#: Fields that are *derived*, not read, and so cannot be held to the evidence
+#: rule. A boarding pass prints "PDL", never "Ponta Delgada"; the city is not
+#: on the page and no honest model can quote it. Demanding a quote anyway
+#: discarded the one value the timezone lookup depends on, and then reported
+#: the model for inventing it — punishing it for answering the question we
+#: asked. These are used, and named as inferences by `place.expanded_from_code`
+#: so a reviewer sees which values were concluded rather than transcribed.
+#:
+#: Nothing else joins this set. A derived field is one whose absence from the
+#: page is *expected*; for every other field, an unquotable value is exactly
+#: the hallucination this extractor exists to catch.
+DERIVED_FIELDS = {
+    "origin_city",
+    "destination_city",
 }
 
 #: How close a corrected quote must be to something on the page. High enough
@@ -714,6 +847,31 @@ GROUND_MODES = {
 }
 
 
+def _cities_from_airport_db(record) -> None:
+    """Take the city from the airport database wherever a code names one.
+
+    The city exists only to resolve a timezone, and "which city is PDL in" is
+    a lookup, not a judgement. The offline database answers it the same way
+    every time, so where there is an IATA code its answer replaces the model's
+    — including when the model left the field empty, which is the honest thing
+    for it to do on a page that never prints the city.
+
+    Without a code there is nothing to look up, and the model's inference
+    stands as the only available answer.
+    """
+    db = get_airport_db()
+    if not db.available:
+        return
+
+    for name in ("origin", "destination"):
+        place = getattr(record, name, None)
+        if place is None or not getattr(place, "iata", None):
+            continue
+        airport = db.get(place.iata)
+        if airport and airport.city:
+            place.city = airport.city
+
+
 def _flag_expanded_places(record, source_text: str) -> None:
     """Note place names and cities the model supplied that the document abbreviates.
 
@@ -756,9 +914,15 @@ def _build_record(
     kind = str(entry.get("kind") or "").strip().lower()
     supported, unsupported, corrected = _verify_evidence(entry, source_text)
 
+    # A city the page never prints is a conclusion, not a quote. Keep it,
+    # because the timezone depends on it, and take it out of the discard list
+    # so an expected absence is not reported as an invention.
+    derived = unsupported & DERIVED_FIELDS
+    unsupported = unsupported - DERIVED_FIELDS
+
     # Anything the model could not quote from the source is discarded before
     # it is ever used to build a record.
-    clean = {k: v for k, v in entry.items() if k in supported}
+    clean = {k: v for k, v in entry.items() if k in supported or k in derived}
 
     provenance = Provenance(
         extractor="llm",
@@ -855,6 +1019,7 @@ def _build_record(
     if record is None:
         return None
 
+    _cities_from_airport_db(record)
     _flag_expanded_places(record, source_text)
 
     if corrected:

@@ -25,7 +25,7 @@ from .extractors import barcode as barcode_extractor
 from .extractors import consensus
 from .extractors import kitinerary as kitinerary_extractor
 from .extractors import llm as llm_extractor
-from . import manifest
+from . import manifest, progress
 from .ingest import Ingested, ingest, ingest_text
 from .schema import (
     FlightRecord,
@@ -51,6 +51,7 @@ SPARE_MODELS = 2
 
 def process_file(path: Path, original_name: str | None = None, existing_events=None) -> Itinerary:
     """Full pipeline for an uploaded file."""
+    progress.report(f"Reading the text of {original_name or path.name}")
     ingested = ingest(path, original_name)
     try:
         return _process(ingested, source_path=path, existing_events=existing_events)
@@ -75,6 +76,7 @@ def _read_with_models(
     """
     expect = manifest.read(text, payloads, len(ingested.image_paths)).named
     quorum = get_config().llm_quorum
+    progress.report("Working out how many journeys are on the page")
 
     # Before anything that touches the network: choosing models asks the
     # provider which are free, and with no key that is a pointless request on
@@ -101,12 +103,16 @@ def _read_with_models(
         # the next. Two samples catch that as well as two models would.
         models = (models * quorum)[:quorum]
 
-    readings, used = consensus.read(
+    progress.report(
+        f"Asking {len(models)} models to read it"
+        + (f", expecting {len(expect)} journeys" if expect else "")
+    )
+    readings, used, conversations = consensus.read(
         text,
         ingested.source_file,
         ingested.ocr_confidence,
         models,
-        llm_extractor.extract_with,
+        llm_extractor.read_with,
         want=quorum,
         grace_seconds=get_config().llm_quorum_grace,
         expect=expect,
@@ -127,11 +133,12 @@ def _read_with_models(
     # the same model dropping a field on one run and not the next.
     if len(readings) < quorum and used:
         try:
-            again = llm_extractor.extract_with(
+            again, exchange = llm_extractor.read_with(
                 used[0], text, ingested.source_file, ingested.ocr_confidence, expect=expect
             )
             readings.append(again)
             used.append(used[0])
+            conversations.append(exchange)
         except Exception:  # noqa: BLE001 - one reading is still a reading
             pass
 
@@ -144,7 +151,19 @@ def _read_with_models(
             "pipeline",
         )
 
-    return consensus.reconcile(readings, used)
+    # The first model to answer adjudicates, because it is the one still
+    # holding the document and its own reading of it.
+    progress.report(f"Comparing {len(readings)} readings")
+    exchange, adjudicator = next(
+        ((c, m) for c, m in zip(conversations, used) if c), (None, None)
+    )
+    return consensus.reconcile(
+        readings,
+        used,
+        source_text=text,
+        conversation=exchange,
+        adjudicator=adjudicator,
+    )
 
 
 def _second_pass_for_nothing_at_all(
@@ -335,6 +354,7 @@ def _process(
         )
 
     itinerary.source_text[ingested.source_file] = model_text
+    progress.report(f"Checking what was read from {ingested.source_file}")
     return run_all(itinerary, existing_events)
 
 

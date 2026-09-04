@@ -15,6 +15,21 @@
   </ul>
   {% endif %}
 
+  {# Two readings differed and neither the document nor the model settled it.
+     A warning about that is only useful to somebody who can act on it, and
+     the person holding the ticket can simply look. #}
+  {% for dispute in record.disputes if not dispute.chosen %}
+  <div class="dispute">
+    <form method="post" action="/submissions/{{ submission_id }}/records/{{ index }}/choose">
+      <input type="hidden" name="field" value="{{ dispute.field }}">
+      <span class="field">{{ dispute.field }}:</span>
+      {% for option in dispute["values"] %}
+      <button class="option" type="submit" name="value" value="{{ option }}">{{ option }}</button>
+      {% endfor %}
+    </form>
+  </div>
+  {% endfor %}
+
   {# Every value the tool concluded, for any status. The summary line above
      hides the times, their zones, the location, the description and the
      reminders, which are exactly what a review has to check. #}

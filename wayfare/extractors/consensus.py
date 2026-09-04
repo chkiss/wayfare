@@ -30,6 +30,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 
 from ..schema import FlightRecord, IssueLevel, LocalTime, Record, TrainRecord
+from . import llm as llm_extractor
 
 SOURCE = "consensus"
 
@@ -77,8 +78,8 @@ def read(
     want: int = 2,
     grace_seconds: float = 25.0,
     **prompt_options,
-) -> tuple[list[Record], list[str]]:
-    """Read the document with each model, in parallel. Returns (readings, used).
+) -> tuple[list[Record], list[str], list[dict | None]]:
+    """Read the document with each model in parallel: (readings, used, conversations).
 
     In parallel because these are independent HTTP calls to a slow provider,
     and running them one after another would multiply the wait for somebody
@@ -103,15 +104,20 @@ def read(
     the answer another one gave.
     """
     if not models:
-        return [], []
+        return [], [], []
 
     def attempt(model: str):
         try:
-            return model, extractor(model, text, source_file, ocr_confidence, **prompt_options)
+            answer = extractor(model, text, source_file, ocr_confidence, **prompt_options)
         except Exception:  # noqa: BLE001 - one model failing is not a failure
-            return model, None
+            return model, None, None
+        # An extractor may hand back the exchange as well as the records, so a
+        # follow-up question can be asked in the same conversation.
+        if isinstance(answer, tuple):
+            return model, answer[0], answer[1]
+        return model, answer, None
 
-    readings: list[tuple[str, list[Record]]] = []
+    readings: list[tuple[str, list[Record], dict | None]] = []
     started = time.monotonic()
     pool = ThreadPoolExecutor(max_workers=len(models))
     try:
@@ -130,13 +136,13 @@ def read(
                 if len(readings) >= want:
                     break  # Several can land in one batch; take only what was asked for.
                 try:
-                    model, records = future.result()
+                    model, records, conversation = future.result()
                 except Exception:  # noqa: BLE001 - attempt() already absorbs these
                     continue
                 if records is None:
                     continue  # Refused or failed; a spare may still answer.
 
-                readings.append((model, records))
+                readings.append((model, records, conversation))
                 # The clock starts at the first *answer*, not the first
                 # refusal: a refusal costs no time, and starting it there
                 # would spend the window before anybody had read anything.
@@ -156,7 +162,11 @@ def read(
         # somebody is waiting on this.
         pool.shutdown(wait=False, cancel_futures=True)
 
-    return [records for _, records in readings], [model for model, _ in readings]
+    return (
+        [records for _, records, _ in readings],
+        [model for model, _, _ in readings],
+        [conversation for _, _, conversation in readings],
+    )
 
 
 def _service_identity(record: Record):
@@ -214,17 +224,144 @@ def _comparable(value):
     return value
 
 
-def reconcile(readings: list[list[Record]], models: list[str]) -> list[Record]:
-    """Fold several models' readings of one document into one set of records."""
+def reconcile(
+    readings: list[list[Record]],
+    models: list[str],
+    source_text: str | None = None,
+    conversation: dict | None = None,
+    adjudicator: str | None = None,
+) -> list[Record]:
+    """Fold several models' readings of one document into one set of records.
+
+    Where the readings differ, the model that did the reading is asked which
+    value the document supports, before anything is reported to the user. It
+    is asked once for the whole document rather than once per record, because
+    the disputes are usually the same misreading repeated down a ticket and
+    one round trip to a slow free model is enough to settle all of them.
+    """
     if len(readings) < 2:
         return readings[0] if readings else []
 
     merged: list[Record] = []
+    outstanding: list[tuple[Record, list[str], list[dict]]] = []
     for versions in _group(readings):
-        merged.append(_reconcile_one(versions, len(readings), models))
+        record, agreed, disputed = _reconcile_one(versions, len(readings), models)
+        merged.append(record)
+        outstanding.append((record, agreed, disputed))
+
+    resolved = _ask_the_reader(outstanding, source_text, conversation, adjudicator)
+
+    for record, agreed, disputed in outstanding:
+        _report(record, agreed, disputed, len(readings), models, resolved)
 
     merged.sort(key=lambda r: (_start_of(r).local if _start_of(r) else datetime.max))
     return merged
+
+
+def _ask_the_reader(
+    outstanding: list[tuple[Record, list[str], list[dict]]],
+    source_text: str | None,
+    conversation: dict | None,
+    adjudicator: str | None,
+) -> dict[int, str]:
+    """Have the model settle what it can, returning the disputes it decided.
+
+    Keyed by the identity of the dispute, because the same field name recurs
+    across every record in a document and the ruling belongs to one of them.
+    """
+    if not (source_text and conversation and adjudicator):
+        return {}
+
+    askable = [d for record, _, disputes in outstanding for d in disputes if d["text"]]
+    if not askable:
+        return {}
+
+    # Asked under the field's own name, so the model is answering about
+    # "origin.name" rather than about an index into a list it cannot see.
+    # Identical questions from different records collapse into one, and the
+    # answer applies to each of them.
+    by_question: dict[tuple, list[dict]] = {}
+    for dispute in askable:
+        by_question.setdefault((dispute["field"], tuple(dispute["values"])), []).append(dispute)
+
+    questions = [
+        {"field": field, "values": list(values)} for field, values in by_question
+    ]
+
+    try:
+        picked = llm_extractor.adjudicate(adjudicator, conversation, questions, source_text)
+    except Exception:  # noqa: BLE001 - an unsettled dispute is the status quo
+        return {}
+
+    resolved: dict[int, str] = {}
+    for (field, values), disputes in by_question.items():
+        chosen = picked.get(field)
+        if chosen is None:
+            continue
+        for dispute in disputes:
+            holder = dispute["holder"]
+            if getattr(holder, dispute["attr"], None) != chosen:
+                setattr(holder, dispute["attr"], chosen)
+            resolved[id(dispute)] = chosen
+    return resolved
+
+
+def _report(
+    record: Record,
+    agreed: list[str],
+    disputed: list[dict],
+    model_count: int,
+    models: list[str],
+    resolved: dict[int, str],
+) -> None:
+    """Say what the readings did and did not settle between them."""
+    settled = [d for d in disputed if id(d) in resolved]
+    open_disputes = [d for d in disputed if id(d) not in resolved]
+
+    if agreed:
+        distinct = len(set(models))
+        who = (
+            f"{model_count} models"
+            if distinct >= model_count
+            else f"{model_count} readings by {distinct} model"
+        )
+        record.add_issue(
+            IssueLevel.INFO,
+            "consensus.models_agree",
+            f"{who} read this independently and agreed on "
+            f"{len(agreed)} values, including {', '.join(sorted(agreed)[:4])}.",
+            SOURCE,
+        )
+
+    if settled:
+        record.add_issue(
+            IssueLevel.INFO,
+            "consensus.resolved_by_model",
+            "The readings differed about "
+            + "; ".join(f"{d['field']} (kept '{resolved[id(d)]}')" for d in settled)
+            + ". The model that read the document was asked which the source "
+            "supports, and had to quote the line that decided it.",
+            SOURCE,
+        )
+
+    if open_disputes:
+        record.add_issue(
+            IssueLevel.WARN,
+            "consensus.models_disagree",
+            "The readings disagreed about "
+            + "; ".join(
+                f"{d['field']}: " + " or ".join(f"'{v}'" for v in d["values"])
+                for d in open_disputes
+            )
+            + ". The most fully quoted reading was kept — choose below, or "
+            "check these before trusting them.",
+            SOURCE,
+        )
+        record.disputes = [
+            {"field": d["field"], "values": list(d["values"]), "chosen": None}
+            for d in open_disputes
+            if d["text"]
+        ]
 
 
 def _group(readings: list[list[Record]]) -> list[list[Record]]:
@@ -262,15 +399,17 @@ def _group(readings: list[list[Record]]) -> list[list[Record]]:
     return groups
 
 
-def _reconcile_one(versions: list[Record], model_count: int, models: list[str]) -> Record:
-    """One journey as several models read it."""
+def _reconcile_one(
+    versions: list[Record], model_count: int, models: list[str]
+) -> tuple[Record, list[str], list[dict]]:
+    """One journey as several models read it, with what they did and did not settle."""
     # The reading with the most fields quoted from the document leads, and the
     # others fill its gaps. Extraction confidence is exactly that measure.
     versions = sorted(versions, key=lambda r: r.extraction_confidence, reverse=True)
     best, others = versions[0], versions[1:]
 
     agreed: list[str] = []
-    disputed: list[str] = []
+    disputed: list[dict] = []
 
     for field in _COMPARED:
         if not hasattr(best, field):
@@ -295,32 +434,10 @@ def _reconcile_one(versions: list[Record], model_count: int, models: list[str]) 
             "It is included because a leg one model missed is still a leg.",
             SOURCE,
         )
-    elif agreed:
-        distinct = len(set(models))
-        who = (
-            f"{model_count} models"
-            if distinct >= model_count
-            else f"{model_count} readings by {distinct} model"
-        )
-        best.add_issue(
-            IssueLevel.INFO,
-            "consensus.models_agree",
-            f"{who} read this independently and agreed on "
-            f"{len(agreed)} values, including {', '.join(sorted(agreed)[:4])}.",
-            SOURCE,
-        )
-
-    if disputed:
-        best.add_issue(
-            IssueLevel.WARN,
-            "consensus.models_disagree",
-            "The readings disagreed about " + "; ".join(disputed) + ". "
-            "The most fully quoted reading was kept — check these before trusting them.",
-            SOURCE,
-        )
+        agreed = []  # Nothing was corroborated; only one reading saw this.
 
     best.provenance.model = " + ".join(dict.fromkeys(models))
-    return best
+    return best, agreed, disputed
 
 
 def _settle(primary, secondaries, field, agreed, disputed, prefix="") -> None:
@@ -343,9 +460,24 @@ def _settle(primary, secondaries, field, agreed, disputed, prefix="") -> None:
             if f"{prefix}{field}" not in agreed:
                 agreed.append(f"{prefix}{field}")
         else:
-            note = f"{prefix}{field}: '{_show(mine)}' or '{_show(theirs)}'"
-            if note not in disputed:
-                disputed.append(note)
+            name = f"{prefix}{field}"
+            existing = next((d for d in disputed if d["field"] == name), None)
+            if existing is None:
+                disputed.append(
+                    {
+                        "field": name,
+                        "attr": field,
+                        "values": [_show(mine), _show(theirs)],
+                        "holder": primary,
+                        # Only plain text can be handed back and forth as a
+                        # choice. A disputed time is a disputed *datetime*, and
+                        # a rendered one cannot be put back on the record.
+                        "text": isinstance(mine, str) and isinstance(theirs, str),
+                    }
+                )
+            elif _show(theirs) not in existing["values"]:
+                existing["values"].append(_show(theirs))
+                existing["text"] = existing["text"] and isinstance(theirs, str)
 
 
 def _show(value) -> str:

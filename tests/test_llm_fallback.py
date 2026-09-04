@@ -30,7 +30,7 @@ def configured(monkeypatch, tmp_path):
 def test_the_configured_model_is_tried_first(monkeypatch):
     tried = []
 
-    def fake_post(model, text, cfg):
+    def fake_post(model, text, cfg, messages=None):
         tried.append(model)
         return Reply(200, '{"records": []}')
 
@@ -42,7 +42,7 @@ def test_the_configured_model_is_tried_first(monkeypatch):
 def test_a_rate_limited_model_falls_through_to_the_next(monkeypatch):
     tried = []
 
-    def fake_post(model, text, cfg):
+    def fake_post(model, text, cfg, messages=None):
         tried.append(model)
         return Reply(429) if model == "primary:free" else Reply(200, '{"records": []}')
 
@@ -56,7 +56,7 @@ def test_a_rate_limited_model_falls_through_to_the_next(monkeypatch):
 
 
 def test_a_network_failure_also_falls_through(monkeypatch):
-    def fake_post(model, text, cfg):
+    def fake_post(model, text, cfg, messages=None):
         if model == "primary:free":
             raise TimeoutError("upstream gone")
         return Reply(200, '{"records": []}')
@@ -69,7 +69,7 @@ def test_a_bad_key_is_not_retried_against_every_model(monkeypatch):
     """401 is about the key, not the model; trying more is pointless."""
     tried = []
 
-    def fake_post(model, text, cfg):
+    def fake_post(model, text, cfg, messages=None):
         tried.append(model)
         return Reply(401)
 
@@ -80,7 +80,7 @@ def test_a_bad_key_is_not_retried_against_every_model(monkeypatch):
 
 
 def test_exhausting_every_model_says_so_plainly(monkeypatch):
-    monkeypatch.setattr(llm, "_post", lambda model, text, cfg: Reply(429))
+    monkeypatch.setattr(llm, "_post", lambda model, text, cfg, messages=None: Reply(429))
     with pytest.raises(llm.LLMUnavailable, match="No model could be reached"):
         llm._call_model("some text", config.get_config())
 
@@ -89,7 +89,7 @@ def test_the_fallback_count_is_configurable(monkeypatch):
     monkeypatch.setenv("WAYFARE_LLM_FALLBACKS", "1")
     config._config = None
     tried = []
-    monkeypatch.setattr(llm, "_post", lambda model, text, cfg: tried.append(model) or Reply(429))
+    monkeypatch.setattr(llm, "_post", lambda model, text, cfg, messages=None: tried.append(model) or Reply(429))
     with pytest.raises(llm.LLMUnavailable):
         llm._call_model("some text", config.get_config())
     assert tried == ["primary:free", "spare-one:free"]
@@ -112,7 +112,7 @@ def test_a_rate_limit_is_classified_on_its_status_not_its_body(monkeypatch):
         status_code = 429
         text = "rate limited upstream (request req_404abc)"
 
-    monkeypatch.setattr(llm, "_post", lambda model, text, cfg: Response())
+    monkeypatch.setattr(llm, "_post", lambda model, text, cfg, messages=None: Response())
     value, error = llm._attempt("primary:free", "text", config.get_config())
     assert value is None
     assert modelchain.classify_failure(error, getattr(error, "status", None)) == "temporary"
@@ -125,7 +125,7 @@ def test_a_spent_free_window_is_capped_not_merely_slowed(monkeypatch):
         status_code = 429
         text = "free usage exceeded, retry in 15 minutes"
 
-    monkeypatch.setattr(llm, "_post", lambda model, text, cfg: Response())
+    monkeypatch.setattr(llm, "_post", lambda model, text, cfg, messages=None: Response())
     _, error = llm._attempt("primary:free", "text", config.get_config())
     kind = modelchain.classify_failure(error, getattr(error, "status", None))
     assert kind == "capped"
