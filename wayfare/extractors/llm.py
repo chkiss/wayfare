@@ -620,14 +620,36 @@ def _bench(cfg=None):
 
 
 def _candidates(cfg) -> list[str]:
-    """The configured model first, then free alternatives as fallbacks."""
-    chain = [cfg.llm_model]
-    for identifier in free_models(cfg):
-        if identifier not in chain:
+    """The configured model first, then free alternatives as fallbacks.
+
+    Models already known to be unavailable are passed over while the chain is
+    being filled, rather than filling it and being skipped afterwards. They
+    are not the same thing: the chain is four long, and on a day when one
+    provider's whole free tier was capped, its dead models took three of those
+    four slots and the one working endpoint got the last one. When that
+    endpoint returned a transient 500, the document was reported unreadable
+    with several usable models never tried.
+
+    The bench is still consulted at call time — this only decides who gets a
+    place in the queue.
+    """
+    bench = _bench(cfg)
+    chain: list[str] = []
+    passed_over: list[str] = []
+
+    for identifier in [cfg.llm_model, *free_models(cfg)]:
+        if identifier in chain or identifier in passed_over:
+            continue
+        if bench.usable(identifier):
             chain.append(identifier)
+        else:
+            passed_over.append(identifier)
         if len(chain) >= cfg.llm_fallbacks + 1:
             break
-    return chain
+
+    # Everything benched: try anyway rather than not calling at all. A bench
+    # duration is an estimate, and one stale entry must not mean silence.
+    return chain or passed_over[: cfg.llm_fallbacks + 1]
 
 
 class _Failure(str):
