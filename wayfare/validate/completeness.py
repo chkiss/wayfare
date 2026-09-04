@@ -102,6 +102,37 @@ def missing_journeys(text: str, records: list, barcode_payloads=None, pages: int
     return sorted(set(missing))
 
 
+def unnamed_journeys(text: str, records: list) -> list:
+    """Records claiming a service the document never names.
+
+    The opposite failure to a missing leg, and the one nothing here looked for:
+    a reading that produces *more* journeys than the page describes. Measured
+    on a four-flight itinerary, one run returned seven records — three of them
+    would have gone on a calendar as flights nobody has a seat on.
+
+    Only a record whose carrier the document does use is reported, and only
+    when the page named services at all. A number the scan simply missed is
+    common; a number for an airline that appears nowhere on the ticket is the
+    reading having invented a leg.
+    """
+    named = manifest_module.designators(text)
+    if not named:
+        return []
+
+    carriers = {code[:2] for code in named}
+    surplus = []
+    for record in _transport(records):
+        carrier = (
+            getattr(record, "carrier", None) or getattr(record, "operator", None) or ""
+        ).upper()[:2]
+        number = str(getattr(record, "number", "") or "").lstrip("0")
+        if not carrier or not number or carrier not in carriers:
+            continue
+        if f"{carrier}{number}" not in named:
+            surplus.append(record)
+    return surplus
+
+
 def run(itinerary: Itinerary, barcode_payloads=None, pages: int = 0) -> Itinerary:
     if not itinerary.source_text:
         return itinerary
@@ -128,6 +159,20 @@ def run(itinerary: Itinerary, barcode_payloads=None, pages: int = 0) -> Itinerar
                 "itinerary.leg_possibly_missing",
                 f"The document also mentions {', '.join(missing)}, which was not "
                 "extracted. Check whether this booking has another leg.",
+                SOURCE,
+            )
+
+    for name, text in itinerary.source_text.items():
+        for record in unnamed_journeys(text, itinerary.records):
+            carrier = (
+                getattr(record, "carrier", None) or getattr(record, "operator", None) or ""
+            )
+            record.add_issue(
+                IssueLevel.WARN,
+                "leg.not_named_in_document",
+                f"'{name}' does not mention {carrier}{record.number}, though it names "
+                f"other {carrier} services. This may be a leg that was read twice or "
+                "invented; check it before adding it.",
                 SOURCE,
             )
     return itinerary

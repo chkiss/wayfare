@@ -97,13 +97,53 @@ def looks_like_transport(text: str) -> bool:
     return bool(_TRANSPORT_WORDS.search(text))
 
 
+#: Labels that say a code on this line is not a journey of its own.
+#:
+#: "EQUIPMENT: AIRBUS INDUSTRIE A330-200" is the aircraft. "OPERATED BY: KLM
+#: ROYAL DUTCH AIRLINES, KL 1824" is the partner's number for a flight already
+#: counted under the marketing carrier — one seat, one journey, two numbers,
+#: and counting both asks the model for a leg that does not exist.
+_NOT_A_JOURNEY = re.compile(
+    r"\b(equipment|aircraft|aeronave|flugzeug|ger[äa]t|"
+    r"operated\s+by|operado\s+por|op[ée]r[ée]\s+par|durchgef[üu]hrt\s+von|"
+    r"marketed\s+by|codeshare|code\s?share)\b",
+    re.I,
+)
+
+
+def _labelled_line(text: str, position: int) -> bool:
+    """Does the line this code sits on say it is something other than a service?"""
+    start = text.rfind("\n", 0, position) + 1
+    return bool(_NOT_A_JOURNEY.search(text[start:position]))
+
+
 def designators(text: str) -> list[str]:
-    """Services named with a carrier code, e.g. S4246."""
+    """Services named with a carrier code, e.g. S4246.
+
+    This list becomes a checklist handed to the model — "each of these needs
+    its own record" — which makes a false positive here expensive in the
+    opposite direction to the one it was built for. Measured on a real Amadeus
+    itinerary of four flights, it named eleven: three aircraft types, three
+    codeshare numbers for flights already counted, and a figure out of a
+    sentence about carbon emissions. The model was then asked to find eleven
+    journeys, and duly produced seven.
+
+    Each of those has a label sitting on the same line, so none of them needs
+    guessing at.
+    """
     found = set()
     for match in _DESIGNATOR_RE.finditer(text):
         before = text[max(0, match.start() - 14) : match.start()]
         if re.search(r"(terminal|class|classe|gate|seat|pc|kg|lbs?|eur|usd|tel|fax)\W{0,3}$",
                      before, re.I):
+            continue
+        if _labelled_line(text, match.start()):
+            continue
+        # "EMISSIONS IS 978.44 KG": the number runs on into a decimal, so it is
+        # a quantity in a sentence rather than a service.
+        if text[match.end() : match.end() + 1] in {".", ","} and text[
+            match.end() + 1 : match.end() + 2
+        ].isdigit():
             continue
         found.add(f"{match.group(1)}{int(match.group(2))}")
     for match in _SHORT_DESIGNATOR_RE.finditer(text):
