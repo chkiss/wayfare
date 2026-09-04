@@ -119,12 +119,28 @@ def _read_with_models(
             text, ingested.source_file, ingested.ocr_confidence, expect=expect
         )
 
-    if len(readings) < len(models):
+    # Asking several models does not guarantee several answers: measured, four
+    # were asked and one answered, the rest refusing instantly on their rate
+    # limit. Rather than give up the cross-check, ask the model that *did*
+    # answer for a second reading. These models are not deterministic even at
+    # temperature zero, and the failure being guarded against is exactly that —
+    # the same model dropping a field on one run and not the next.
+    if len(readings) < quorum and used:
+        try:
+            again = llm_extractor.extract_with(
+                used[0], text, ingested.source_file, ingested.ocr_confidence, expect=expect
+            )
+            readings.append(again)
+            used.append(used[0])
+        except Exception:  # noqa: BLE001 - one reading is still a reading
+            pass
+
+    if len(readings) < quorum:
         itinerary.add_issue(
             IssueLevel.INFO,
             "consensus.partial",
-            f"{len(readings)} of {len(models)} models answered; "
-            "the reading was not cross-checked.",
+            f"Only {len(readings)} of {quorum} readings came back; "
+            "this was not cross-checked.",
             "pipeline",
         )
 
