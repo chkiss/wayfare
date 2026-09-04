@@ -180,3 +180,38 @@ def test_a_gateway_that_hides_its_prices_uses_the_models_it_was_given(monkeypatc
     assert models == ["zen:big-pickle", "zen:tencent/hy3:free"]
     # Named, so its catalogue is never fetched at all.
     assert not any("opencode" in base for base in asked)
+
+
+def test_one_model_is_never_asked_twice_at_once(monkeypatch):
+    """Measured: on a day when one provider was the only one answering, a
+    quorum of two sent it two simultaneous requests per document, spent its
+    whole daily free allowance on six documents, and left the last unread.
+
+    The same model asked twice is a real cross-check — these models are not
+    deterministic at temperature zero — but it is paid for sequentially, after
+    the first answer, so a failed reading does not cost a second call.
+    """
+    import wayfare.pipeline as pipeline
+    from wayfare.ingest import ingest_text
+    from wayfare.schema import Itinerary
+
+    monkeypatch.setenv("WAYFARE_LLM_QUORUM", "2")
+    config._config = None
+
+    asked_at_once = []
+
+    monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "usable_models", lambda count: ["only-one:free"])
+
+    def record_batch(text, source, confidence, models, extractor, **kwargs):
+        asked_at_once.append(list(models))
+        return [], [], []
+
+    monkeypatch.setattr(pipeline.consensus, "read", record_batch)
+    monkeypatch.setattr(llm, "extract", lambda *a, **k: [])
+
+    pipeline._read_with_models_uncorrected(
+        "text", ingest_text("text", "t.txt"), Itinerary(), [], []
+    )
+
+    assert asked_at_once == [["only-one:free"]], "one model, one simultaneous request"

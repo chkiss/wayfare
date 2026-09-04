@@ -113,14 +113,13 @@ def _read_with_models_uncorrected(
             text, ingested.source_file, ingested.ocr_confidence, expect=expect
         )
 
-    if len(models) < quorum:
-        # Not enough distinct models available — on a free tier, usually most
-        # of them are rate limited at once. Ask the one that is left twice
-        # instead. These models are not deterministic even at temperature
-        # zero, and the failures being guarded against are exactly that: the
-        # same model, on the same text, dropping a field on one run and not
-        # the next. Two samples catch that as well as two models would.
-        models = (models * quorum)[:quorum]
+    # A single model is asked twice only *after* its first answer arrives, by
+    # the top-up below — never twice at once. Two simultaneous requests to one
+    # endpoint is the same endpoint doing double the work for a weaker
+    # cross-check, and measured, it is how a day's free budget goes: reading
+    # six documents at a quorum of two spent the whole daily allowance of the
+    # one working provider and left the last of them unread. Sequentially, the
+    # second reading is only paid for when the first succeeded.
 
     progress.report(
         f"Asking {len(models)} models to read it"
