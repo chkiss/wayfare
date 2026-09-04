@@ -138,7 +138,26 @@ class Config:
     llm_extra_providers: str = field(
         default_factory=lambda: os.environ.get("WAYFARE_LLM_PROVIDERS", "zen")
     )
-    llm_timeout: float = field(default_factory=lambda: float(os.environ.get("WAYFARE_LLM_TIMEOUT", "90")))
+    #: Models to use on an endpoint whose catalogue does not say what anything
+    #: costs, as ``provider=model|model[,provider=...]``. Zen is such a
+    #: gateway: it lists everything it sells beside the few it gives away, so
+    #: discovery cannot tell them apart and the free ones are named instead.
+    #: These are wrong the day the provider changes them, which is why they are
+    #: configuration and not code.
+    llm_provider_models: str = field(
+        #: Only big-pickle by default: measured keyless from this machine,
+        #: hy3 answered 401. A model that needs a key nobody has is a slot in
+        #: the chain spent on a certain failure.
+        default_factory=lambda: os.environ.get(
+            "WAYFARE_LLM_PROVIDER_MODELS", "zen=big-pickle"
+        )
+    )
+    #: Generous, because the free models that answer at all are slow: measured,
+    #: big-pickle read a one-flight receipt correctly in 63 seconds, and the
+    #: old 90-second ceiling turned ordinary variance into "could not be read".
+    #: Nobody waits on this in silence any more — the page reports the stage it
+    #: has reached, and a second opinion gets a scaled window of its own.
+    llm_timeout: float = field(default_factory=lambda: float(os.environ.get("WAYFARE_LLM_TIMEOUT", "180")))
     #: How many other free models to fall back to when the chosen one is busy.
     llm_fallbacks: int = field(
         default_factory=lambda: int(os.environ.get("WAYFARE_LLM_FALLBACKS", "3"))
@@ -244,6 +263,12 @@ class Config:
             configured.setdefault(name.strip(), {})
             if url.strip():
                 configured[name.strip()]["api_base"] = url.strip()
+
+        for item in (self.llm_provider_models or "").split(","):
+            name, _, models = item.partition("=")
+            listed = [m.strip() for m in models.split("|") if m.strip()]
+            if name.strip() and listed:
+                configured.setdefault(name.strip(), {})["models"] = listed
 
         return modelchain.Providers(configured, base_url=self.llm_base_url)
 

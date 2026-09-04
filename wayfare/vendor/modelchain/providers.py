@@ -137,6 +137,19 @@ class Providers:
     def tags(self, entry: str) -> list[str]:
         return list(self.conf(self.split(entry)[0]).get("tags") or [])
 
+    def models(self, name: str) -> list[str]:
+        """Models named in configuration for this provider, if any.
+
+        Discovery is preferred and is what keeps a chain from rotting, but it
+        only works where the catalogue says what a model costs. Some gateways
+        publish a bare OpenAI ``/models`` list with no pricing at all, and they
+        are not free gateways — they sell most of what they list and give a few
+        away. There is nothing to discover there, so those models are named,
+        and named in the application's configuration rather than in here, where
+        a list would go stale exactly as this library warns.
+        """
+        return list(self.conf(name).get("models") or [])
+
     def console_url(self, entry: str) -> str:
         return self.conf(self.split(entry)[0]).get("console_url", "")
 

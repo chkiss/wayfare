@@ -113,6 +113,7 @@ def test_the_endpoints_are_interleaved_not_exhausted_in_turn(monkeypatch):
     """One provider's whole catalogue first would spend the chain inside one
     outage — which is exactly the day this was built for."""
     monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "zen")
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDER_MODELS", "")  # discovery, not a named list
     config._config = None
     monkeypatch.setattr(
         llm.modelchain,
@@ -126,6 +127,7 @@ def test_the_endpoints_are_interleaved_not_exhausted_in_turn(monkeypatch):
 def test_an_endpoint_that_is_down_costs_nothing(monkeypatch):
     """Discovery is a convenience and must never be why a call does not happen."""
     monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "zen")
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDER_MODELS", "")
     config._config = None
 
     def half_broken(base):
@@ -157,3 +159,24 @@ def test_the_default_endpoint_is_asked_first(monkeypatch):
     monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "zen")
     config._config = None
     assert config.get_config().enabled_providers[0] == "openrouter"
+
+
+def test_a_gateway_that_hides_its_prices_uses_the_models_it_was_given(monkeypatch):
+    """Zen lists what it sells beside the few it gives away, and marks neither,
+    so discovery cannot tell them apart and would offer paid models as free."""
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "zen")
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDER_MODELS", "zen=big-pickle")
+    config._config = None
+
+    asked = []
+
+    def note(base):
+        asked.append(base)
+        return []
+
+    monkeypatch.setattr(llm.modelchain, "free_models", note)
+    models = llm.free_models()
+
+    assert models == ["zen:big-pickle", "zen:tencent/hy3:free"]
+    # Named, so its catalogue is never fetched at all.
+    assert not any("opencode" in base for base in asked)

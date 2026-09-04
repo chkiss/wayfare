@@ -596,10 +596,16 @@ def free_models(cfg=None) -> list[str]:
         base = providers.conf(name).get("api_base")
         if not base:
             continue
-        try:
-            found = modelchain.free_models(base)
-        except Exception:  # noqa: BLE001 - one endpoint being down is not a failure
-            continue
+
+        # Named models win over discovery, and are the only option on a
+        # gateway that lists what it sells beside what it gives away without
+        # marking either.
+        found = providers.models(name)
+        if not found:
+            try:
+                found = modelchain.free_models(base)
+            except Exception:  # noqa: BLE001 - one endpoint down is not a failure
+                continue
         usable = [m for m in found if providers.qualify(name, m) not in UNUSABLE]
         if usable:
             catalogue[name] = usable
