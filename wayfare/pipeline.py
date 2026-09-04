@@ -24,12 +24,14 @@ from pathlib import Path
 from .config import get_config
 from .extractors import barcode as barcode_extractor
 from .extractors import consensus
+from .extractors import icsevent
 from .extractors import kitinerary as kitinerary_extractor
 from .extractors import llm as llm_extractor
 from . import manifest, progress
 from .ingest import Ingested, ingest, ingest_text
 from .schema import (
     FlightRecord,
+    TrainRecord,
     IssueLevel,
     Itinerary,
     LocalTime,
@@ -39,7 +41,10 @@ from .schema import (
 from .validate import completeness, run_all
 
 #: Order of authority. Earlier wins on a field-by-field conflict.
-TRUST = {"barcode": 3, "kitinerary": 2, "llm": 1, "manual": 4}
+#: A calendar attachment sits above KItinerary's document parsers and below a
+#: barcode: it is machine-written by the operator, but it describes the
+#: journey rather than the boarding pass, so a barcode still overrules it.
+TRUST = {"manual": 5, "barcode": 4, "ics": 3, "kitinerary": 2, "llm": 1}
 
 #: Labels the barcode contents where they are appended to the OCR text, so the
 #: model can tell machine-written data from what was read off the pixels.
@@ -348,7 +353,23 @@ def _process(
             "pipeline",
         )
 
-    # 2. KItinerary, when the input is a real document and the tool is present.
+    # 2. A calendar attachment states the journey outright — exact times, a
+    # named zone, written by the operator's own system. Read before the model,
+    # and trusted above it, because there is nothing here to interpret.
+    if icsevent.looks_like_calendar(ingested.text):
+        from_calendar = icsevent.extract(ingested.text, ingested.source_file)
+        candidates.extend(from_calendar)
+        if from_calendar:
+            itinerary.add_issue(
+                IssueLevel.INFO,
+                "ics.read",
+                f"Read {len(from_calendar)} journey"
+                f"{'s' if len(from_calendar) > 1 else ''} from the calendar attachment, "
+                "which states the times exactly.",
+                "pipeline",
+            )
+
+    # 3. KItinerary, when the input is a real document and the tool is present.
     if source_path is not None and kitinerary_extractor.available():
         candidates.extend(kitinerary_extractor.extract(source_path, ingested.source_file))
 
@@ -449,7 +470,38 @@ def _same_journey(a: Record, b: Record) -> bool:
     start_b = getattr(b, "departure", None) or getattr(b, "check_in", None) or getattr(b, "start", None)
     if start_a is None or start_b is None:
         return False
-    return start_a.local.date() == start_b.local.date()
+    if start_a.local.date() != start_b.local.date():
+        return False
+
+    if isinstance(a, TrainRecord) and isinstance(b, TrainRecord):
+        # Same day was the whole test here, which made every rail connection
+        # disappear: a Frankfurt-Köln-Paris journey is two trains on one
+        # afternoon, and merging them left one record ending where it started.
+        # A flight has always been compared on its number; ground transport
+        # deserves the same, and where the numbers are absent, on the route.
+        number_a = str(a.number or "").lstrip("0")
+        number_b = str(b.number or "").lstrip("0")
+        if number_a and number_b:
+            return number_a.casefold() == number_b.casefold()
+
+        ends_a = (_label(a.origin), _label(a.destination))
+        ends_b = (_label(b.origin), _label(b.destination))
+        if all(ends_a) and all(ends_b):
+            return ends_a == ends_b
+
+        # Nothing to tell them apart but the clock, so trust it: two legs
+        # departing the same minute are one leg read twice.
+        return start_a.local == start_b.local
+
+    return True
+
+
+def _label(place) -> str:
+    """A place reduced to something two records can be compared on."""
+    if place is None:
+        return ""
+    value = place.iata or place.name or place.city or ""
+    return "".join(ch for ch in str(value).casefold() if ch.isalnum())
 
 
 def _is_placeholder_time(when: LocalTime | None) -> bool:

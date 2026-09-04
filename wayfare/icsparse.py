@@ -109,6 +109,12 @@ def parse(text: str) -> list[VEvent]:
             zone = next(
                 (p.split("=", 1)[1] for p in params if p.upper().startswith("TZID=")), None
             )
+            # A trailing Z is UTC, and saying nothing about it left the stamp
+            # looking like a floating local time. An airline writes its .ics in
+            # UTC, so a Frankfurt departure came back as 13:13 when the board
+            # says 14:13 — the right instant under the wrong number.
+            if zone is None and value.strip().upper().endswith("Z"):
+                zone = "UTC"
             if name == "DTSTART":
                 current.start, current.all_day, current.start_tz = stamp, all_day, zone
             else:

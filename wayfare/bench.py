@@ -260,10 +260,26 @@ def _same_place(want: str | None, got_record, side: str) -> bool | None:
     return False
 
 
-def _same_number(want: str | None, got: str | None) -> bool | None:
+def _same_number(want: str | None, record) -> bool | None:
+    """Did we identify the service, however the corpus writes it?
+
+    The corpus puts the operator inside the number for rail — `trainNumber` is
+    "ICE 16" — while wayfare keeps `operator` and `number` apart. Comparing the
+    raw strings marked every correct train wrong, which read as 2% when it was
+    nearer all of them.
+    """
     if not want:
         return None
-    return str(want).lstrip("0").casefold() == str(got or "").lstrip("0").casefold()
+
+    number = str(getattr(record, "number", "") or "")
+    operator = str(
+        getattr(record, "carrier", None) or getattr(record, "operator", None) or ""
+    )
+    wanted = _norm(want).lstrip("0")
+    return wanted in {
+        _norm(number).lstrip("0"),
+        _norm(f"{operator}{number}").lstrip("0"),
+    }
 
 
 def _same_time(want: datetime | None, got) -> bool | None:
@@ -300,7 +316,7 @@ def _pair(expected: list[Expected], records: list[Record]) -> list[tuple[Expecte
             points = 0
             if _kind_of(record) == want.kind:
                 points += 2
-            if _same_number(want.number, getattr(record, "number", None)) is True:
+            if _same_number(want.number, record) is True:
                 points += 3
             start = getattr(record, "departure", None) or getattr(record, "check_in", None)
             if want.start and start is not None and getattr(start, "local", None) is not None:
@@ -343,7 +359,7 @@ def compare(case: Case, itinerary: Itinerary) -> Result:
             continue
 
         note("kind", _kind_of(record) == want.kind)
-        note("number", _same_number(want.number, getattr(record, "number", None)))
+        note("number", _same_number(want.number, record))
         note("origin", _same_place(want.origin, record, "origin"))
         note("destination", _same_place(want.destination, record, "destination")
              if want.kind != "lodging"
