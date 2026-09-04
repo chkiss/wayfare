@@ -542,10 +542,24 @@ def _post(model: str, text: str, cfg, messages: list[dict] | None = None) -> htt
     )
 
 
+#: Free models that are listed but cannot be used from here, so asking is a
+#: wasted slot rather than a chance. The bench exists for models that are
+#: temporarily unavailable; these are permanently unavailable to this kind of
+#: client, and benching them for a day only means asking again tomorrow.
+#:
+#: Both inkling models answer every request with
+#: "403 ... is only available on agentic harnesses". Measured: they occupied
+#: two of the four models a quorum of two asks for, on every single upload.
+UNUSABLE = {
+    "thinkingmachines/inkling:free",
+    "thinkingmachines/inkling-small:free",
+}
+
+
 def free_models(cfg=None) -> list[str]:
-    """Models the provider currently offers at no cost."""
+    """Models the provider currently offers at no cost, and that we can use."""
     cfg = cfg or get_config()
-    return modelchain.free_models(cfg.llm_base_url)
+    return [m for m in modelchain.free_models(cfg.llm_base_url) if m not in UNUSABLE]
 
 
 def _bench(cfg=None):

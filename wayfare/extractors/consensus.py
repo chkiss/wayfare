@@ -25,6 +25,7 @@ glance is worth more than any tie-break rule I could invent.
 
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
@@ -249,6 +250,10 @@ def reconcile(
         merged.append(record)
         outstanding.append((record, agreed, disputed))
 
+    for record, _, disputes in outstanding:
+        for dispute in disputes:
+            dispute["material"] = _changes_the_event(record, dispute)
+
     resolved = _ask_the_reader(outstanding, source_text, conversation, adjudicator)
 
     for record, agreed, disputed in outstanding:
@@ -256,6 +261,38 @@ def reconcile(
 
     merged.sort(key=lambda r: (_start_of(r).local if _start_of(r) else datetime.max))
     return merged
+
+
+def _changes_the_event(record: Record, dispute: dict) -> bool:
+    """Would either reading produce a different calendar entry?
+
+    Not every disagreement is worth anybody's time. Two readings differed over
+    whether the passenger is "Kissick Charles Mr" or "Kissick Charles Mr
+    (ADT)" — a fare code the airline appends — and neither string appears
+    anywhere in the event. That difference cost a model call to adjudicate,
+    and when the model would not settle it, a warning that took the record's
+    confidence down and held it for review over a value nobody would ever see.
+
+    Rather than keeping a list of which fields reach the calendar, which would
+    drift the moment the conventions file changes, this renders the event both
+    ways and compares. What the user sees is the only thing that decides
+    whether the difference matters.
+    """
+    holder, attribute = dispute["holder"], dispute["attr"]
+    original = getattr(holder, attribute, None)
+
+    try:
+        from ..render import to_google_events
+
+        shapes = set()
+        for value in dispute["values"]:
+            setattr(holder, attribute, value)
+            shapes.add(json.dumps(to_google_events(record), sort_keys=True, default=str))
+        return len(shapes) > 1
+    except Exception:  # noqa: BLE001 - if it cannot be told, treat it as material
+        return True
+    finally:
+        setattr(holder, attribute, original)
 
 
 def _ask_the_reader(
@@ -272,7 +309,12 @@ def _ask_the_reader(
     if not (source_text and conversation and adjudicator):
         return {}
 
-    askable = [d for record, _, disputes in outstanding for d in disputes if d["text"]]
+    askable = [
+        d
+        for record, _, disputes in outstanding
+        for d in disputes
+        if d["text"] and d.get("material", True)
+    ]
     if not askable:
         return {}
 
@@ -316,7 +358,13 @@ def _report(
 ) -> None:
     """Say what the readings did and did not settle between them."""
     settled = [d for d in disputed if id(d) in resolved]
-    open_disputes = [d for d in disputed if id(d) not in resolved]
+    unsettled = [d for d in disputed if id(d) not in resolved]
+    # A difference that changes nothing the user will see is worth noting and
+    # nothing more. Reported as a warning it cost the record a quarter of its
+    # confidence and held it for review, over a fare code appended to a name
+    # that never reaches the calendar.
+    open_disputes = [d for d in unsettled if d.get("material", True)]
+    immaterial = [d for d in unsettled if not d.get("material", True)]
 
     if agreed:
         distinct = len(set(models))
@@ -343,6 +391,16 @@ def _report(
                 for d in settled
             )
             + ".",
+            SOURCE,
+        )
+
+    if immaterial:
+        record.add_issue(
+            IssueLevel.INFO,
+            "consensus.immaterial_difference",
+            "The readings differed about "
+            + "; ".join(d["field"] for d in immaterial)
+            + ", which does not change the calendar entry either way.",
             SOURCE,
         )
 

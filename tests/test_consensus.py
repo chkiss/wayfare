@@ -12,6 +12,7 @@ import pytest
 from wayfare.extractors import consensus
 from wayfare.schema import (
     FlightRecord,
+    TrainRecord,
     LocalTime,
     LodgingRecord,
     Place,
@@ -317,19 +318,36 @@ def test_no_readings_at_all_is_not_a_crash():
 # --- letting the reader settle what the readings could not --------------
 
 
+def train(name, **overrides):
+    """A rail leg, where the station name *is* the calendar title.
+
+    Disputes are only worth settling when they change the event, and a
+    flight's title is built from its airport codes — so two readings of an
+    airport's full name are a difference nobody would ever see. A station has
+    no code, which is why the measured case was a station.
+    """
+    base = dict(
+        mode="train",
+        operator="Amtrak",
+        number="2151",
+        origin=Place(city="Boston", name="Back Bay Station"),
+        destination=Place(city="New York", name=name),
+        departure=LocalTime(local=datetime(2026, 9, 27, 9, 55), timezone="America/New_York"),
+        arrival=LocalTime(local=datetime(2026, 9, 27, 12, 58), timezone="America/New_York"),
+        provenance=Provenance(extractor="llm", model="a:free"),
+        extraction_confidence=0.85,
+    )
+    base.update(overrides)
+    return TrainRecord(**base)
+
+
 def _disputed_pair():
     """The measured case: the same station, named two ways."""
-    short = flight(destination=Place(iata="JFK", city="New York", name="John F Kennedy"))
-    full = flight(
-        destination=Place(
-            iata="JFK", city="New York", name="John F. Kennedy International Airport"
-        )
-    )
-    return short, full
+    return train("Penn Station"), train("Moynihan Train Hall at Penn Station")
 
 
 CONVERSATION = {"prompt": "...", "reply": {"records": []}}
-SOURCE = "Depart John F. Kennedy International Airport at 12:58"
+SOURCE = "Arrive Moynihan Train Hall at Penn Station at 12:58"
 
 
 def test_the_model_settles_a_disagreement_it_can_quote(monkeypatch):
@@ -339,7 +357,7 @@ def test_the_model_settles_a_disagreement_it_can_quote(monkeypatch):
     def fake_adjudicate(model, conversation, disputes, source_text):
         asked["model"] = model
         asked["fields"] = [d["field"] for d in disputes]
-        return {"destination.name": "John F. Kennedy International Airport"}
+        return {"destination.name": "Moynihan Train Hall at Penn Station"}
 
     monkeypatch.setattr(consensus.llm_extractor, "adjudicate", fake_adjudicate)
 
@@ -351,7 +369,7 @@ def test_the_model_settles_a_disagreement_it_can_quote(monkeypatch):
         adjudicator="a:free",
     )
 
-    assert record.destination.name == "John F. Kennedy International Airport"
+    assert record.destination.name == "Moynihan Train Hall at Penn Station"
     assert asked["model"] == "a:free"
     assert asked["fields"] == ["destination.name"]
     codes = [i.code for i in record.issues]
@@ -379,8 +397,8 @@ def test_a_dispute_the_model_will_not_settle_is_offered_to_the_user(monkeypatch)
     (dispute,) = record.disputes
     assert dispute["field"] == "destination.name"
     assert set(dispute["values"]) == {
-        "John F Kennedy",
-        "John F. Kennedy International Airport",
+        "Penn Station",
+        "Moynihan Train Hall at Penn Station",
     }
 
 
@@ -456,3 +474,91 @@ def test_unrelated_numbers_on_one_route_stay_separate():
     evening = flight(carrier="S4", number="871")
 
     assert len(consensus.reconcile([[morning], [evening]], MODELS)) == 2
+
+
+# --- differences that change nothing ------------------------------------
+
+
+def test_a_difference_the_calendar_never_shows_is_not_adjudicated(monkeypatch):
+    """A flight's event is built from its airport codes, not their full names.
+
+    Measured: two readings differed over "John F Kennedy" against "John F.
+    Kennedy International Airport" on a leg already carrying JFK. The event
+    reads "JFK, New York" either way. Settling that cost a model call, and
+    failing to settle it cost the record a quarter of its confidence and held
+    it for review over a value nobody would ever see.
+    """
+    def explode(*args, **kwargs):
+        raise AssertionError("should not have asked a model about this")
+
+    monkeypatch.setattr(consensus.llm_extractor, "adjudicate", explode)
+
+    (record,) = consensus.reconcile(
+        [[flight(destination=Place(iata="JFK", city="New York", name="John F Kennedy"))],
+         [flight(destination=Place(
+             iata="JFK", city="New York", name="John F. Kennedy International Airport"))]],
+        MODELS,
+        source_text="Arrive John F. Kennedy International Airport",
+        conversation=CONVERSATION,
+        adjudicator="a:free",
+    )
+
+    codes = [i.code for i in record.issues]
+    assert "consensus.immaterial_difference" in codes
+    assert "consensus.models_disagree" not in codes
+    assert not record.warnings, "an invisible difference must not hold the record"
+    assert not record.disputes
+
+
+def test_a_name_that_does_reach_the_description_is_still_adjudicated(monkeypatch):
+    """The boundary is what the event shows, not which field it is.
+
+    The traveller's name is printed in the description, so a disagreement
+    about it is worth settling — the same field would be immaterial if the
+    conventions stopped rendering it, which is why this is decided by
+    rendering rather than by a list.
+    """
+    asked = {}
+    monkeypatch.setattr(
+        consensus.llm_extractor,
+        "adjudicate",
+        lambda model, conv, disputes, text: asked.setdefault(
+            "fields", [d["field"] for d in disputes]
+        ) and {},
+    )
+
+    consensus.reconcile(
+        [[flight(traveller="Kissick Charles Mr")],
+         [flight(traveller="Kissick Charles Mr (ADT)")]],
+        MODELS,
+        source_text="Passenger: Kissick Charles Mr (ADT)",
+        conversation=CONVERSATION,
+        adjudicator="a:free",
+    )
+    assert asked["fields"] == ["traveller"]
+
+
+def test_a_difference_that_changes_the_title_is_still_adjudicated(monkeypatch):
+    asked = {}
+
+    def fake(model, conversation, disputes, source_text):
+        asked["fields"] = [d["field"] for d in disputes]
+        return {}
+
+    monkeypatch.setattr(consensus.llm_extractor, "adjudicate", fake)
+    short, full = _disputed_pair()
+
+    (record,) = consensus.reconcile(
+        [[short], [full]], MODELS, source_text=SOURCE,
+        conversation=CONVERSATION, adjudicator="a:free",
+    )
+    assert asked["fields"] == ["destination.name"]
+    assert record.warnings
+
+
+def test_a_disputed_departure_time_is_always_material():
+    """The one thing a calendar entry is for."""
+    early = flight(departure=LocalTime(local=datetime(2026, 9, 27, 9, 55), timezone="Europe/Lisbon"))
+    late = flight(departure=LocalTime(local=datetime(2026, 9, 27, 19, 55), timezone="Europe/Lisbon"))
+    (record,) = consensus.reconcile([[early], [late]], MODELS)
+    assert "consensus.models_disagree" in [i.code for i in record.issues]

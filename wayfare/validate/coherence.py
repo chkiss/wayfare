@@ -11,7 +11,7 @@ network and no key.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from ..schema import (
     FlightRecord,
@@ -32,10 +32,32 @@ STOPOVER_HOURS = 24
 LONG_STAY_DAYS = 60
 
 
+def _departure_order(record) -> datetime:
+    """A sort key that is always comparable with the others.
+
+    `to_utc` returns an aware datetime when the leg's zone was resolved and
+    None when it was not, and the fallback used to hand back a naive one.
+    Python refuses to compare the two, so an itinerary holding one leg with a
+    known zone and one without did not merely sort oddly — it raised, out of a
+    validator, and lost the whole document. Measured on the corpus: four of
+    six flight itineraries crashed here, which is most of what "could not be
+    read at all" meant.
+
+    A leg with no zone is ordered by its local clock read as though it were
+    UTC. That is wrong by at most a day, and only for ordering; every check
+    that cares about the actual instant asks `to_utc` for itself and skips the
+    leg when it gets None.
+    """
+    stamp = to_utc(record.departure)
+    if stamp is not None:
+        return stamp
+    return record.departure.local.replace(tzinfo=timezone.utc)
+
+
 def _legs(itinerary: Itinerary) -> list:
     """Flights and trains together, in departure order."""
     legs = [r for r in itinerary.records if isinstance(r, (FlightRecord, TrainRecord))]
-    return sorted(legs, key=lambda r: (to_utc(r.departure) or r.departure.local.replace(tzinfo=None)))
+    return sorted(legs, key=_departure_order)
 
 
 def _check_lodging(itinerary: Itinerary) -> None:
