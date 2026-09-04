@@ -337,8 +337,7 @@ def _report(
         record.add_issue(
             IssueLevel.INFO,
             "consensus.resolved_by_model",
-            "Settled against the source: "
-            + "; ".join(
+            "; ".join(
                 f"{d['field']} '{resolved[id(d)]}' over "
                 + " or ".join(f"'{v}'" for v in d["values"] if v != resolved[id(d)])
                 for d in settled
