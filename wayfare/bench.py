@@ -397,7 +397,14 @@ def run(
                 itinerary = pipeline.process_file(case.path, case.path.name)
                 results.append(compare(case, itinerary))
             except Exception as exc:  # noqa: BLE001 - a crash is a result too
-                results.append(Result(case=case, error=f"{type(exc).__name__}: {exc}"))
+                # Scored as though it had found nothing, which is what it did.
+                # Counting the error and stopping there would drop the
+                # document's legs out of the denominator, and a crash would
+                # score better than a wrong answer — the same trap as
+                # rewarding an empty reading, arriving by another road.
+                result = compare(case, Itinerary())
+                result.error = f"{type(exc).__name__}: {exc}"
+                results.append(result)
         return results
     finally:
         if previous is None:
@@ -421,8 +428,7 @@ def summarise(results: list[Result]) -> dict:
         bucket["found"] += result.found
         if result.error:
             bucket["errors"] += 1
-            continue
-        if result.count_ok:
+        elif result.count_ok:
             bucket["right_count"] += 1
         for name, (got, total) in result.fields.items():
             slot = fields.setdefault(name, [0, 0])

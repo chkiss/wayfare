@@ -216,3 +216,30 @@ def test_the_switch_is_put_back_afterwards(corpus, monkeypatch):
     import os
 
     assert "WAYFARE_DISABLE_LLM" not in os.environ
+
+
+def test_a_document_that_crashed_still_counts_against_the_score(corpus, monkeypatch):
+    """A crash must not score better than a wrong answer.
+
+    Counting the error and skipping the fields dropped the document's legs out
+    of the denominator entirely — the same trap as rewarding an empty reading,
+    reached by another road. Measured: five documents raised, and the field
+    totals fell from 22 legs to 2.
+    """
+    import wayfare.pipeline as pipeline
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("tesseract fell over")
+
+    monkeypatch.setattr(pipeline, "process_file", explode)
+    (result,) = bench.run(corpus)
+
+    assert result.error and "tesseract" in result.error
+    assert result.found == 0
+    assert result.fields["number"] == (0, 1)
+    assert result.fields["start"] == (0, 1)
+
+    summary = bench.summarise([result])
+    assert summary["errors"] == 1
+    assert summary["fields"]["number"] == (0, 1)
+    assert summary["categories"]["flight"]["expected"] == 1
