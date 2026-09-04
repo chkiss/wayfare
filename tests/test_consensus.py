@@ -239,6 +239,35 @@ def test_a_second_opinion_inside_the_window_is_used():
     assert len(readings) == 2
 
 
+def test_a_spare_stands_in_for_a_model_that_refuses():
+    """Measured: a two-model quorum returned one reading in nine seconds,
+    the other having been rate limited instantly."""
+
+    def fake(model, text, source_file, confidence, **kwargs):
+        if model == "a:free":
+            raise RuntimeError("429 rate limited")
+        return [flight(model=model)]
+
+    readings, used = consensus.read(
+        "text", "f.pdf", None, ["a:free", "b:free", "c:free"], fake, want=2
+    )
+    assert sorted(used) == ["b:free", "c:free"]
+    assert len(readings) == 2
+
+
+def test_spares_are_abandoned_once_enough_have_answered():
+    asked = []
+
+    def fake(model, text, source_file, confidence, **kwargs):
+        asked.append(model)
+        return [flight(model=model)]
+
+    _, used = consensus.read(
+        "text", "f.pdf", None, ["a:free", "b:free", "c:free", "d:free"], fake, want=2
+    )
+    assert len(used) == 2
+
+
 def test_a_single_reading_is_returned_unchanged():
     """Nothing to compare against, so nothing is added or claimed."""
     (record,) = consensus.reconcile([[flight()]], ["a:free"])

@@ -26,7 +26,7 @@ glance is worth more than any tie-break rule I could invent.
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 
 from ..schema import FlightRecord, IssueLevel, LocalTime, Record, TrainRecord
@@ -66,6 +66,7 @@ def read(
     ocr_confidence: float | None,
     models: list[str],
     extractor,
+    want: int = 2,
     grace_seconds: float = 25.0,
     **prompt_options,
 ) -> tuple[list[Record], list[str]]:
@@ -81,6 +82,13 @@ def read(
     an unbounded one — a reading that arrives after the deadline is dropped and
     the record is simply not cross-checked, which is what happens anyway when
     only one model is available.
+
+    More models are asked than answers are wanted, because on a free tier a
+    model is far more likely to refuse instantly than to answer slowly —
+    measured: a two-model quorum returned one reading in nine seconds, the
+    other having been rate limited at once. Spares cost nothing when the first
+    choices answer, since the extra requests are abandoned as soon as enough
+    readings are in.
 
     A model that fails is absent from the result. Its failure is the chain's
     business, not this function's: one model being rate limited must not lose
@@ -98,38 +106,36 @@ def read(
     readings: list[tuple[str, list[Record]]] = []
     pool = ThreadPoolExecutor(max_workers=len(models))
     try:
-        futures = [pool.submit(attempt, model) for model in models]
+        pending = {pool.submit(attempt, model) for model in models}
         deadline = None
 
-        for future in as_completed(futures, timeout=None):
-            try:
-                model, records = future.result()
-            except Exception:  # noqa: BLE001
-                continue
-            if records is not None:
-                readings.append((model, records))
+        while pending and len(readings) < want:
+            # Unbounded until something has actually been read, then bounded by
+            # what is left of the window.
+            timeout = None if deadline is None else max(0.0, deadline - time.monotonic())
+            done, pending = wait(pending, timeout=timeout, return_when=FIRST_COMPLETED)
+            if not done:
+                break  # The window expired with the rest still in flight.
 
-            if deadline is None:
-                deadline = time.monotonic() + grace_seconds
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-
-            pending = [f for f in futures if not f.done()]
-            if not pending:
-                break
-            wait(pending, timeout=remaining)
-            for future_done in [f for f in pending if f.done()]:
+            for future in done:
+                if len(readings) >= want:
+                    break  # Several can land in one batch; take only what was asked for.
                 try:
-                    model, records = future_done.result()
-                except Exception:  # noqa: BLE001
+                    model, records = future.result()
+                except Exception:  # noqa: BLE001 - attempt() already absorbs these
                     continue
-                if records is not None:
-                    readings.append((model, records))
-            break
+                if records is None:
+                    continue  # Refused or failed; a spare may still answer.
+
+                readings.append((model, records))
+                # The clock starts at the first *answer*, not the first
+                # refusal: a refusal costs no time, and starting it there
+                # would spend the window before anybody had read anything.
+                if deadline is None:
+                    deadline = time.monotonic() + grace_seconds
     finally:
-        # Not waiting on stragglers: their answer is no longer wanted, and the
-        # person is waiting on this.
+        # Not waiting on stragglers: their answer is no longer wanted, and
+        # somebody is waiting on this.
         pool.shutdown(wait=False, cancel_futures=True)
 
     return [records for _, records in readings], [model for model, _ in readings]

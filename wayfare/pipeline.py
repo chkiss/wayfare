@@ -44,6 +44,10 @@ TRUST = {"barcode": 3, "kitinerary": 2, "llm": 1, "manual": 4}
 #: model can tell machine-written data from what was read off the pixels.
 BARCODE_HEADING = "--- barcode contents (machine-written, not OCR) ---"
 
+#: Extra models asked beyond the quorum, so a refusal costs a spare rather than
+#: the cross-check. Abandoned as soon as enough readings are in.
+SPARE_MODELS = 2
+
 
 def process_file(path: Path, original_name: str | None = None, existing_events=None) -> Itinerary:
     """Full pipeline for an uploaded file."""
@@ -80,7 +84,9 @@ def _read_with_models(
             text, ingested.source_file, ingested.ocr_confidence, expect=expect
         )
 
-    models = llm_extractor.usable_models(quorum)
+    # Spares, because a busy free model refuses instantly rather than slowly,
+    # and without them a quorum of two is a quorum of one most of the time.
+    models = llm_extractor.usable_models(quorum + SPARE_MODELS)
     if len(models) < 2:
         # Everything else is benched. One reading is better than none, and the
         # chain will report why the others are unavailable.
@@ -94,6 +100,7 @@ def _read_with_models(
         ingested.ocr_confidence,
         models,
         llm_extractor.extract_with,
+        want=quorum,
         grace_seconds=get_config().llm_quorum_grace,
         expect=expect,
     )
