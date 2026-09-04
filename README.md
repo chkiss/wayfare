@@ -22,14 +22,22 @@ checked against the extracted text, and any field it cannot quote is thrown away
 before a record is even built. A model that invents a departure time cannot
 produce evidence for it, so the invention never reaches your calendar.
 
-**Every document is read twice.** Quoting catches a wrong value, but the usual
-failure of a free model is an *absent* one: a flight number left out, a leg of a
-two-flight receipt skipped, occasionally a whole document returning nothing at
-all. Those readings are consistent with the source, so no amount of checking
-against the source finds them. A second reading rarely drops the same field, so
-its answer fills the gap. Agreement is the only positive evidence in the
-pipeline; every other check can establish only that a record is not
-contradicted.
+**A document can be read twice, and compared.** Quoting catches a wrong value,
+but the usual failure of a free model is an *absent* one: a flight number left
+out, a leg of a two-flight receipt skipped, occasionally a whole document
+returning nothing at all. Those readings are consistent with the source, so no
+amount of checking against the source finds them. A second reading rarely drops
+the same field, so its answer fills the gap. Agreement is the only positive
+evidence in the pipeline; every other check can establish only that a record is
+not contradicted.
+
+Set `WAYFARE_LLM_QUORUM=2` to turn it on. It is off by default because on a
+free tier the second reading is not free of consequence: measured over six
+documents in one afternoon, a quorum of two read 12 legs of 22 and a quorum of
+one read 17 — the extra calls spent the daily allowance of the only provider
+still answering, and the later documents got nothing at all. A cross-check that
+costs a whole document is not worth making. Raise it where the budget is real:
+a paid tier, a local endpoint, or a day with two providers answering.
 
 Where the two readings differ, the model that read the document is asked which
 value the source supports, as a continuation of the same conversation, so it
@@ -40,9 +48,10 @@ Anything left standing becomes a choice on the review page, because the person
 holding the ticket can simply look.
 
 The two readings come from different models when the backend has two to spare.
-On a free tier it is usually one model asked twice, which catches the same
-failure, because these models are not deterministic even at temperature zero.
-The event says which. Set `WAYFARE_LLM_QUORUM=1` for a single reading.
+Where only one model is answering it is asked twice instead, which catches the
+same failure because these models are not deterministic even at temperature
+zero — but sequentially, after the first answer, never as two simultaneous
+requests to one endpoint. The event says which it was.
 
 **Boarding pass barcodes outrank everything.** The barcode on a boarding pass is
 a fixed-width string written by the airline's own system: route, flight number,

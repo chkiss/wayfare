@@ -103,12 +103,23 @@ class Config:
     pending_calendar_name: str = field(
         default_factory=lambda: os.environ.get("WAYFARE_PENDING_CALENDAR", "Travel (pending)")
     )
-    #: How many models read each document independently. Two is the default
-    #: because the dominant failure of a free model is an absent value rather
-    #: than a wrong one, and a second reading that did not drop the same field
-    #: fills it in. One restores single-model behaviour exactly.
+    #: How many models read each document independently.
+    #:
+    #: A second reading catches the dominant failure of a free model — an
+    #: absent value rather than a wrong one — and it is worth having whenever
+    #: there is budget for it. On a free tier there is not. Measured over six
+    #: documents on the same day: a quorum of two read 12 legs of 22 and a
+    #: quorum of one read 17, because the second reading spent the daily
+    #: allowance of the only provider still answering and later documents got
+    #: nothing at all. A cross-check that costs a whole document is not a
+    #: cross-check worth making.
+    #:
+    #: So one by default, and raise it where the budget is real: a paid tier,
+    #: a local endpoint, or a day with two providers answering. Nothing else
+    #: about consensus changes — set it to two and every guarantee described in
+    #: `extractors/consensus.py` applies again.
     llm_quorum: int = field(
-        default_factory=lambda: max(1, int(os.environ.get("WAYFARE_LLM_QUORUM", "2")))
+        default_factory=lambda: max(1, int(os.environ.get("WAYFARE_LLM_QUORUM", "1")))
     )
     #: How long a second opinion may keep the first one waiting. Free models
     #: range from seconds to minutes, and a cross-check is worth some delay but

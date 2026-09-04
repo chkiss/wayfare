@@ -215,3 +215,23 @@ def test_one_model_is_never_asked_twice_at_once(monkeypatch):
     )
 
     assert asked_at_once == [["only-one:free"]], "one model, one simultaneous request"
+
+
+def test_one_reading_is_the_default(monkeypatch):
+    """A cross-check that costs a whole document is not worth making.
+
+    Measured over six documents in one afternoon: a quorum of two read 12 legs
+    of 22 and a quorum of one read 17, because the extra calls spent the daily
+    allowance of the only provider still answering and the later documents got
+    nothing at all.
+    """
+    monkeypatch.delenv("WAYFARE_LLM_QUORUM", raising=False)
+    config._config = None
+    assert config.get_config().llm_quorum == 1
+
+
+def test_the_quorum_can_still_be_raised(monkeypatch):
+    """Nothing about consensus changed; it is the budget that decides."""
+    monkeypatch.setenv("WAYFARE_LLM_QUORUM", "3")
+    config._config = None
+    assert config.get_config().llm_quorum == 3
