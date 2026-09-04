@@ -33,6 +33,14 @@ from ..schema import FlightRecord, IssueLevel, LocalTime, Record, TrainRecord
 
 SOURCE = "consensus"
 
+#: A second opinion may take this much longer than the first reading did, up to
+#: the configured ceiling. Enough for an ordinary difference in model speed,
+#: short enough that a stalled one is abandoned rather than waited out.
+GRACE_MULTIPLIER = 1.5
+#: A floor, so a first answer that arrives in a second does not leave the rest
+#: no time at all.
+MIN_GRACE_SECONDS = 6.0
+
 #: Fields worth comparing between models. Deliberately not everything: issues,
 #: provenance and confidence are properties of the reading rather than of the
 #: booking, and comparing them would report every record as disputed.
@@ -104,6 +112,7 @@ def read(
             return model, None
 
     readings: list[tuple[str, list[Record]]] = []
+    started = time.monotonic()
     pool = ThreadPoolExecutor(max_workers=len(models))
     try:
         pending = {pool.submit(attempt, model) for model in models}
@@ -131,8 +140,17 @@ def read(
                 # The clock starts at the first *answer*, not the first
                 # refusal: a refusal costs no time, and starting it there
                 # would spend the window before anybody had read anything.
+                #
+                # And it is scaled to how long that answer took. Waiting a flat
+                # 25 seconds for a second opinion after the first arrived in
+                # six means paying four times the reading in hope — measured at
+                # 31.8s for a cross-check that never came. A model much slower
+                # than the one that already answered is an outlier, not a
+                # straggler worth waiting for.
                 if deadline is None:
-                    deadline = time.monotonic() + grace_seconds
+                    taken = time.monotonic() - started
+                    allowed = min(grace_seconds, max(MIN_GRACE_SECONDS, taken * GRACE_MULTIPLIER))
+                    deadline = time.monotonic() + allowed
     finally:
         # Not waiting on stragglers: their answer is no longer wanted, and
         # somebody is waiting on this.

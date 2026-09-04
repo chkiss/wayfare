@@ -226,6 +226,27 @@ def test_a_slow_second_opinion_does_not_hold_up_the_first():
     assert elapsed < 3
 
 
+def test_the_window_is_scaled_to_how_fast_the_first_answer_was():
+    """Measured: a flat window cost 31.8s waiting for a cross-check that never
+    came, after the first model had answered in six seconds."""
+    import time as _time
+
+    def fake(model, text, source_file, confidence, **kwargs):
+        if model == "b:free":
+            _time.sleep(30)
+        return [flight(model=model)]
+
+    started = _time.monotonic()
+    readings, used = consensus.read(
+        "text", "f.pdf", None, MODELS, fake, grace_seconds=25
+    )
+    elapsed = _time.monotonic() - started
+
+    assert used == ["a:free"]
+    # The floor, not the configured 25 seconds.
+    assert elapsed < consensus.MIN_GRACE_SECONDS + 2
+
+
 def test_a_second_opinion_inside_the_window_is_used():
     import time as _time
 
