@@ -210,33 +210,40 @@
     tiles.hidden = false;
   }
 
+  // Resolves when the upload has settled either way, so a re-upload can be
+  // waited on. It never rejects: a failed file is already shown as failed on
+  // its own tile, and the caller checks for an id rather than for a throw.
   function send(item) {
     const body = new FormData();
     body.append("upload", item.file, item.file.name);
 
-    const request = new XMLHttpRequest();
-    item.request = request;
-    request.open("POST", "/uploads");
-    request.upload.onprogress = (event) => {
-      if (event.lengthComputable) item.progress(event.loaded / event.total);
-    };
-    request.onload = () => {
-      item.request = null;
-      if (request.status >= 200 && request.status < 300) {
-        item.id = JSON.parse(request.responseText).id;
-        item.progress(1);
-        item.box.classList.add("done");
-      } else {
-        fail(item, request.status === 413 ? "too large" : "upload failed");
-      }
-      ready();
-    };
-    request.onerror = () => {
-      item.request = null;
-      fail(item, "upload failed");
-      ready();
-    };
-    request.send(body);
+    return new Promise((settled) => {
+      const request = new XMLHttpRequest();
+      item.request = request;
+      request.open("POST", "/uploads");
+      request.upload.onprogress = (event) => {
+        if (event.lengthComputable) item.progress(event.loaded / event.total);
+      };
+      request.onload = () => {
+        item.request = null;
+        if (request.status >= 200 && request.status < 300) {
+          item.id = JSON.parse(request.responseText).id;
+          item.progress(1);
+          item.box.classList.add("done");
+        } else {
+          fail(item, request.status === 413 ? "too large" : "upload failed");
+        }
+        ready();
+        settled(item);
+      };
+      request.onerror = () => {
+        item.request = null;
+        fail(item, "upload failed");
+        ready();
+        settled(item);
+      };
+      request.send(body);
+    });
   }
 
   function fail(item, why) {
@@ -357,16 +364,49 @@
       status.hidden = false;
       say("Sending the batch");
 
-      fetch("/submit", { method: "POST", body })
-        .then((response) => (response.ok ? response.json() : Promise.reject(response)))
-        .then((job) => watch(job.job))
-        .catch(() => {
-          // Fall back to the ordinary form post rather than stranding anyone.
-          form.dataset.plain = "1";
-          status.hidden = true;
-          submit.disabled = false;
-          form.submit();
-        });
+      post(body, true);
+    });
+  }
+
+  // `retry` is spent on the one recoverable refusal: files the server no
+  // longer holds. They are re-uploaded from the File objects still in memory
+  // and the batch is sent again, which needs nothing from the user.
+  function post(body, retry) {
+    fetch("/submit", { method: "POST", body })
+      .then((response) => {
+        if (response.ok) return response.json().then((job) => watch(job.job));
+        if (response.status === 409 && retry) {
+          return response.json().then((problem) => restage(problem.missing || []));
+        }
+        return Promise.reject(response);
+      })
+      .catch(() => {
+        // Fall back to the ordinary form post rather than stranding anyone.
+        form.dataset.plain = "1";
+        status.hidden = true;
+        submit.disabled = false;
+        form.submit();
+      });
+  }
+
+  function restage(missing) {
+    const gone = items.filter((item) => item.id && missing.indexOf(item.id) !== -1);
+    if (!gone.length) return Promise.reject(new Error("nothing to put back"));
+
+    say("Putting the files back on the server");
+    gone.forEach((item) => {
+      item.id = null;
+      item.failed = false;
+      item.box.classList.remove("done", "failed");
+    });
+
+    return Promise.all(gone.map((item) => send(item))).then(() => {
+      if (items.some((item) => !item.id)) return Promise.reject(new Error("re-upload failed"));
+      ready();
+      const body = new FormData(form);
+      body.append("background", "1");
+      say("Sending the batch");
+      post(body, false);
     });
   }
 
@@ -374,29 +414,57 @@
     status.querySelector(".phase").textContent = phase;
   }
 
+  // The work continues on the server whether or not this page can reach it,
+  // so a failed poll is a reason to ask again, not to give up. A single blip
+  // used to end the watch and report "Lost contact" over a job that was
+  // running perfectly well — and then pressing the button again submitted a
+  // batch the finished job had already cleared.
+  const POLL_MS = 500;
+  const GIVE_UP_AFTER = 20; // ~30s of silence, with the backoff below.
+
   function watch(id) {
+    let misses = 0;
+
+    const stop = (message) => {
+      say(message);
+      status.classList.add("failed");
+      submit.disabled = false;
+    };
+
     const poll = () => {
       fetch("/progress/" + encodeURIComponent(id))
-        .then((response) => (response.ok ? response.json() : Promise.reject(response)))
-        .then((job) => {
-          if (job.error) {
-            say(job.error);
-            status.classList.add("failed");
-            submit.disabled = false;
-            return;
+        .then((response) => {
+          if (response.status === 404) {
+            // The job is gone: the server restarted, or it finished long
+            // enough ago to have been swept. Either way the result may well
+            // exist, so send them to it rather than implying a crash.
+            stop("Lost track of that batch. Check below — it may have finished.");
+            return null;
           }
+          if (!response.ok) return Promise.reject(response);
+          return response.json();
+        })
+        .then((job) => {
+          if (job === null) return;
+          misses = 0;
+          if (job.error) return stop(job.error);
           if (job.done && job.submission_id) {
             say("Done");
             window.location = "/submissions/" + job.submission_id;
             return;
           }
           say(job.phase);
-          setTimeout(poll, 500);
+          setTimeout(poll, POLL_MS);
         })
         .catch(() => {
-          say("Lost contact with the server while it was working.");
-          status.classList.add("failed");
-          submit.disabled = false;
+          misses += 1;
+          if (misses >= GIVE_UP_AFTER) {
+            stop("Lost contact with the server. It may still be working — reload to check.");
+            return;
+          }
+          // Backing off, so a restarting server is waited out rather than
+          // hammered. The phase on screen stays as it was.
+          setTimeout(poll, Math.min(4000, POLL_MS * Math.pow(1.6, misses)));
         });
     };
     poll();

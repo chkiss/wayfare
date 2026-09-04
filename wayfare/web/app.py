@@ -363,6 +363,23 @@ async def submit_form(
     except ValueError:
         held = []
 
+    # A staged file that is no longer on the server must never be passed over
+    # in silence. It happened: a submission completed and cleared the batch
+    # while the browser had lost contact, the user pressed the button again,
+    # and the ids posted the second time no longer existed — so the upload was
+    # dropped and only the pasted text was read, with nothing on screen to say
+    # so. The page can put those files back, having never let go of them.
+    if background and staged and len(held) < len(staged):
+        kept = {item.name for item in held}
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Some files are no longer staged on the server.",
+                "missing": [i for i in staged if i not in {h.file_id for h in held}],
+                "kept": sorted(kept),
+            },
+        )
+
     if background:
         # The page will watch this and say what stage it is at. Reading a
         # batch is mostly spent waiting on free models, and a browser given

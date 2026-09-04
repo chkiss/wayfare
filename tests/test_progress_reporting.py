@@ -150,3 +150,45 @@ def test_the_working_panel_is_hidden_until_something_is_running(client):
     assert 'id="working"' in body and "hidden" in body
     # The rule that makes the attribute mean what it says.
     assert "[hidden] { display: none !important; }" in body
+
+
+# --- a batch the server no longer holds ---------------------------------
+
+
+def test_a_staged_file_the_server_lost_is_never_passed_over(client, monkeypatch):
+    """The measured failure: one upload silently dropped, only the text read.
+
+    A submission completed and cleared the batch while the browser had lost
+    contact. The user pressed the button again, the ids no longer existed, and
+    the document was left out of the submission with nothing on screen to say
+    so.
+    """
+    monkeypatch.setattr(web, "_read_one", lambda path, name: None)
+
+    response = client.post(
+        "/submit",
+        data={"background": "1", "staged": ["deadbeefdeadbeef"], "text": "a booking"},
+    )
+    assert response.status_code == 409
+    assert response.json()["missing"] == ["deadbeefdeadbeef"]
+
+
+def test_a_batch_the_server_still_holds_is_submitted(client, monkeypatch):
+    """The recovery must not fire when there is nothing wrong."""
+    from wayfare import staging
+    from wayfare.schema import Itinerary
+
+    session = "sessionsessions1"
+    file_id = staging.add(session, "ticket.pdf", b"%PDF-1.4 fake").file_id
+    client.cookies.set("wayfare_batch", session)
+
+    monkeypatch.setattr(web, "_read_one", lambda path, name: Itinerary())
+    monkeypatch.setattr(web, "_recheck_with_calendar", lambda it: it)
+    monkeypatch.setattr(
+        store, "commit", lambda *a, **k: type("S", (), {"submission_id": "sub-2"})()
+    )
+
+    response = client.post("/submit", data={"background": "1", "staged": [file_id]})
+    assert response.status_code == 200
+    done = wait_for(response.json()["job"], client, lambda j: j["done"])
+    assert done["submission_id"] == "sub-2"
