@@ -26,10 +26,13 @@ from .classify import (
     retry_hint_seconds,
 )
 from .discover import free_models
+from .providers import DEFAULTS, Providers
 
 __all__ = [
     "Attempt",
     "Bench",
+    "DEFAULTS",
+    "Providers",
     "CAP_DEFAULT_SECONDS",
     "ChainExhausted",
     "JsonFileBench",

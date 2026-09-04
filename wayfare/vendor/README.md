@@ -62,6 +62,38 @@ and fail. A hard-coded list rots — models are withdrawn constantly, and when
 the last one on a stale list disappears the application stops working for a
 reason its user cannot see.
 
+## More than one endpoint
+
+`Providers` holds the naming policy for a chain that spans several
+OpenAI-compatible endpoints. A chain entry is either `"model"`, meaning the
+default provider, or `"provider:model"` — split on the first colon and only
+when the prefix names a configured provider, because model ids carry their own
+colons (`"nous:tencent/hy3:free"` is provider `nous`, model
+`tencent/hy3:free`).
+
+```python
+providers = Providers(default="zen")
+providers.split("nous:tencent/hy3:free")   # ("nous", "tencent/hy3:free")
+providers.base_url("big-pickle")           # https://opencode.ai/zen/v1
+providers.spread({"zen": [...], "nous": [...]})   # interleaved, best first
+```
+
+Free tiers rotate, and the provider that is capped today is not the one that
+will be capped tomorrow. Measured: a daily free-request cap was reached, every
+model in a single-endpoint chain reported "rate limited", and the application
+told its user it could not read the document — while a second free endpoint on
+the same machine answered in under a second. `spread` interleaves the
+providers rather than exhausting one catalogue and then the next, so a chain
+does not spend itself inside one outage.
+
+Zen, Nous and OpenRouter ship as defaults; anything can be overridden and
+anything else added. An application written before providers existed passes
+its single `base_url` and keeps working, with bare ids and no prefixes.
+
+This module names endpoints, it does not call them — `key_file` gives the path
+to a provider's key and the caller reads it. A library that reads secrets is a
+library that has to be trusted with them.
+
 ## Storage
 
 `MemoryBench` for a process that does not outlive the request. `JsonFileBench`
