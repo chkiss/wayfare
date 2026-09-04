@@ -289,6 +289,21 @@ def test_spares_are_abandoned_once_enough_have_answered():
     assert len(used) == 2
 
 
+def test_one_model_read_twice_still_cross_checks():
+    """On a free tier most models are rate limited at once, and these are not
+    deterministic even at temperature zero — which is the failure being caught."""
+    twice = ["a:free", "a:free"]
+    lost = flight(number=None, model="a:free")
+    intact = flight(number="273", model="a:free")
+
+    (record,) = consensus.reconcile([[lost], [intact]], twice)
+    assert record.number == "273"
+    assert record.provenance.model == "a:free"
+
+    agreement = [i for i in record.issues if i.code == "consensus.models_agree"]
+    assert agreement and "2 readings by 1 model" in agreement[0].message
+
+
 def test_a_single_reading_is_returned_unchanged():
     """Nothing to compare against, so nothing is added or claimed."""
     (record,) = consensus.reconcile([[flight()]], ["a:free"])

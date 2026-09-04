@@ -87,12 +87,19 @@ def _read_with_models(
     # Spares, because a busy free model refuses instantly rather than slowly,
     # and without them a quorum of two is a quorum of one most of the time.
     models = llm_extractor.usable_models(quorum + SPARE_MODELS)
-    if len(models) < 2:
-        # Everything else is benched. One reading is better than none, and the
-        # chain will report why the others are unavailable.
+    if not models:
         return llm_extractor.extract(
             text, ingested.source_file, ingested.ocr_confidence, expect=expect
         )
+
+    if len(models) < quorum:
+        # Not enough distinct models available — on a free tier, usually most
+        # of them are rate limited at once. Ask the one that is left twice
+        # instead. These models are not deterministic even at temperature
+        # zero, and the failures being guarded against are exactly that: the
+        # same model, on the same text, dropping a field on one run and not
+        # the next. Two samples catch that as well as two models would.
+        models = (models * quorum)[:quorum]
 
     readings, used = consensus.read(
         text,

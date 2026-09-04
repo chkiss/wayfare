@@ -296,10 +296,16 @@ def _reconcile_one(versions: list[Record], model_count: int, models: list[str]) 
             SOURCE,
         )
     elif agreed:
+        distinct = len(set(models))
+        who = (
+            f"{model_count} models"
+            if distinct >= model_count
+            else f"{model_count} readings by {distinct} model"
+        )
         best.add_issue(
             IssueLevel.INFO,
             "consensus.models_agree",
-            f"{model_count} models read this independently and agreed on "
+            f"{who} read this independently and agreed on "
             f"{len(agreed)} values, including {', '.join(sorted(agreed)[:4])}.",
             SOURCE,
         )
