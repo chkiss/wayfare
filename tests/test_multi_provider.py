@@ -165,7 +165,7 @@ def test_a_gateway_that_hides_its_prices_uses_the_models_it_was_given(monkeypatc
     """Zen lists what it sells beside the few it gives away, and marks neither,
     so discovery cannot tell them apart and would offer paid models as free."""
     monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "zen")
-    monkeypatch.setenv("WAYFARE_LLM_PROVIDER_MODELS", "zen=big-pickle")
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDER_MODELS", "zen=big-pickle|tencent/hy3:free")
     config._config = None
 
     asked = []

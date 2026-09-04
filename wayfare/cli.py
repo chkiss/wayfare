@@ -278,6 +278,19 @@ def cmd_doctor(args) -> int:
         print(f" {mark} {name:<22} {_colour(why, DIM)}")
     if get_airport_db().available:
         print(f"\n   {len(get_airport_db())} airports loaded.")
+
+    # Which endpoints, not just whether there is one. Free tiers cap
+    # independently, and "the model backend is configured" was true on a day
+    # when every model on the only endpoint was refusing.
+    if llm.available():
+        providers = cfg.providers
+        print()
+        for name in cfg.enabled_providers:
+            base = providers.conf(name).get("api_base", "?")
+            keyed = "key" if cfg.provider_key(name) else "keyless"
+            named = providers.models(name)
+            how = f"{len(named)} named model{'s' if len(named) != 1 else ''}" if named else "discovers its free models"
+            print(f"   {name:<12} {_colour(base, DIM)}  ({keyed}, {how})")
     return 0
 
 
