@@ -150,6 +150,40 @@ def cmd_fetch_airports(args) -> int:
     return 0
 
 
+def cmd_fetch_reference(args) -> int:
+    """Download the airline and station tables.
+
+    Kept out of the repository deliberately. These are other people's
+    datasets — OpenTravelData under CC-BY, Trainline's stations under ODbL,
+    which requires modifications to be published — and vendoring 70,000 rows
+    of somebody else's data into a public repo is redistribution with the
+    obligations that carries. Downloading them makes the licence the user's
+    relationship with the publisher, and keeps the tables current.
+    """
+    from . import reference
+
+    cfg = get_config()
+    cfg.ensure_dirs()
+
+    for label, url, name in (
+        ("airlines", reference.AIRLINES_URL, "airlines.csv"),
+        ("stations", reference.STATIONS_URL, "stations.csv"),
+    ):
+        print(f"Downloading {label} …")
+        try:
+            with urllib.request.urlopen(url, timeout=180) as response:
+                (cfg.data_dir / name).write_bytes(response.read())
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            print(f"  could not fetch {label}: {type(exc).__name__}: {exc}")
+
+    reference.clear_cache()
+    airlines, stations = reference.available()
+    print(f"\n{len(reference._airlines()) if airlines else 0} airlines, "
+          f"{len(reference._stations()) if stations else 0} stations.")
+    print("Airline data from OpenTravelData (CC-BY); stations from Trainline (ODbL).")
+    return 0
+
+
 def cmd_learn(args) -> int:
     """Derive calendar conventions from an exported calendar."""
     from .icsparse import read
@@ -259,6 +293,7 @@ def cmd_token(args) -> int:
 def cmd_doctor(args) -> int:
     """Report which parts of the pipeline are actually available."""
     from .airports import get_airport_db
+    from . import reference
     from .extractors import barcode, kitinerary, llm
     from .ocr import available as ocr_available
 
@@ -269,6 +304,8 @@ def cmd_doctor(args) -> int:
         ("KItinerary", kitinerary.available(), "airline/rail/hotel document parsers (optional)"),
         ("Model backend", llm.available(), "reading text that has no barcode"),
         ("Airport database", get_airport_db().available, "timezone and block-time checks"),
+        ("Airline names", reference.available()[0], "\"S4 246\" is not a readable calendar entry"),
+        ("Station table", reference.available()[1], "rail timezones without guessing at a city"),
         ("Google credentials", cfg.oauth_token.exists(), "writing to the calendar"),
         ("Owner token", bool(cfg.owner_token), "the review site"),
         ("Agent token", bool(cfg.agent_token), "the scoped agent API"),
@@ -332,6 +369,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8791)
     p.set_defaults(func=cmd_serve)
+
+    sub.add_parser(
+        "fetch-reference",
+        help="Download the airline and station tables (OpenTravelData, Trainline)",
+    ).set_defaults(func=cmd_fetch_reference)
 
     sub.add_parser("fetch-airports", help="Download the airport database").set_defaults(
         func=cmd_fetch_airports

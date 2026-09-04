@@ -236,6 +236,21 @@ def _endpoint(place) -> str:
     return ", ".join(parts)
 
 
+def _operator_name(record) -> str | None:
+    """The airline's name, where a table knows it and the record does not.
+
+    A train already carries its operator as printed on the ticket; only a
+    flight arrives as a bare two-letter code.
+    """
+    named = getattr(record, "operator", None)
+    if named:
+        return named if not str(named).isupper() or len(str(named)) > 3 else None
+
+    from .reference import airline
+
+    return airline(getattr(record, "carrier", None))
+
+
 def event_description(record, conventions: dict[str, Any] | None = None) -> str:
     """A description that shows the booking facts and how they were verified."""
     c = conventions or load_conventions()
@@ -245,6 +260,12 @@ def event_description(record, conventions: dict[str, Any] | None = None) -> str:
         # The hall or concourse belongs here rather than in the title: it is
         # useless until you are at the station, and then it is the only thing
         # you want.
+        # "S4 246" on a calendar tells the reader nothing at all. Which airline
+        # flies under a code is a lookup rather than a judgement, so the title
+        # keeps the code the ticket printed and the description spells it out.
+        operator = _operator_name(record)
+        if operator:
+            lines.append(f"Operator: {operator}")
         lines.append(f"Depart: {format_local(record.departure)} — {_endpoint(record.origin)}")
         if record.arrival:
             lines.append(f"Arrive: {format_local(record.arrival)} — {_endpoint(record.destination)}")

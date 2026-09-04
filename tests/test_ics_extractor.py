@@ -139,3 +139,28 @@ def test_an_all_day_event_is_not_a_departure():
 def test_a_file_that_is_not_a_calendar_is_left_alone():
     assert not icsevent.looks_like_calendar("Dear passenger, your flight...")
     assert icsevent.looks_like_calendar(HAFAS)
+
+
+def test_a_platform_with_letters_in_it_is_still_stripped():
+    """"Köln Hbf - Gleis 8 D-G" kept its platform, because that one does not
+    end in a digit the way "Gleis 19" does."""
+    lettered = calendar(
+        "SUMMARY:Köln Hbf -> Paris Nord",
+        "DTSTART;TZID=Europe/Berlin:20220726T124200",
+        "DESCRIPTION:Reise\\n"
+        "ab 12:42 Köln Hbf - Gleis 8 D-G (THA 9448)\\n"
+        "an 16:05 Paris Nord \\n",
+    )
+    (record,) = icsevent.extract(lettered, "db.ics")
+    assert record.origin.name == "Köln Hbf"
+
+
+def test_a_station_whose_name_contains_a_dash_keeps_it():
+    """The platform is recognised by carrying a number, not by the dash."""
+    dashed = calendar(
+        "SUMMARY:Baden-Baden -> Basel SBB",
+        "DTSTART;TZID=Europe/Berlin:20220726T124200",
+        "DESCRIPTION:Reise\\nab 12:42 Baden-Baden\\nan 14:05 Basel SBB\\n",
+    )
+    (record,) = icsevent.extract(dashed, "db.ics")
+    assert record.origin.name == "Baden-Baden"

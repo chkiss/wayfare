@@ -21,3 +21,10 @@ venv/
 .pytest_cache/
 build/
 dist/
+
+# Downloaded reference data — other people's datasets, fetched on demand by
+# `wayfare fetch-airports` and `wayfare fetch-reference`. OurAirports is public
+# domain, OpenTravelData is CC-BY, and Trainline's stations are ODbL, which
+# puts obligations on redistribution. Committing them would make this repo a
+# copy of somebody else's data rather than a program that reads it.
+data/

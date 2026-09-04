@@ -146,6 +146,33 @@ def _resolve_by_name(place: Place | None) -> list[Issue]:
     if place is None or place.timezone or place.iata:
         return issues
 
+    # A station table answers this outright. Guessing a city from a station
+    # name and then an airport from the city is two inferences deep — "Gare de
+    # Lyon is in Paris" is the easy case and the one the guesswork was built
+    # for; "MONTPELLIER ST-RO" is not. The station's own row carries its
+    # timezone, its coordinates and a UIC code, so where it is known nothing
+    # has to be inferred at all.
+    from ..reference import station as lookup_station
+
+    found = lookup_station(place.name)
+    if found is not None and found.timezone:
+        place.timezone = found.timezone
+        if found.latitude is not None and place.latitude is None:
+            place.latitude, place.longitude = found.latitude, found.longitude
+        issues.append(
+            Issue(
+                level=IssueLevel.INFO,
+                code="place.station_resolved",
+                message=(
+                    f"'{place.name}' is {found.name}"
+                    + (f" (UIC {found.uic})" if found.uic else "")
+                    + f", timezone {found.timezone}."
+                ),
+                source=SOURCE,
+            )
+        )
+        return issues
+
     db = get_airport_db()
     if not db.available:
         return issues

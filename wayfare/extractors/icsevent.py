@@ -91,7 +91,7 @@ _SERVICE = re.compile(r"\((?P<operator>[A-Z]{2,4})\s+(?P<number>\d{1,5})\)\s*$")
 #: after the station. Matched on that shape rather than on a list of words,
 #: and only when it carries a digit, so a station whose name genuinely
 #: contains a dash keeps it.
-_PLATFORM = re.compile(r"\s+-\s+\S+\s*\d\S*\s*$")
+_PLATFORM = re.compile(r"\s+-\s+(?=[^-]*\d)\S.*$")
 
 #: Where a station name stops and the operator's extra notes begin.
 _TRAILING = re.compile(r",\s*(?:seat|sitz|place|dep|arr|ab|an|coach|wagen)\b|\s+-\s+Gleis\b", re.I)
