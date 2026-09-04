@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -144,7 +145,22 @@ def event_summary(record, conventions: dict[str, Any] | None = None) -> str:
     else:  # pragma: no cover - the union is closed
         title = "Travel"
 
-    return f"{prefix}{' '.join(title.split())}"
+    return f"{prefix}{_tidy(title)}"
+
+
+def _tidy(title: str) -> str:
+    """Collapse the gaps a missing field leaves in a title template.
+
+    A template is written for a complete record, so an unread flight number
+    turns "({carrier} {number})" into "(DL )". The value is missing either way;
+    the brackets around nothing just make it look like a bug.
+    """
+    title = " ".join(title.split())
+    title = re.sub(r"\(\s*\)|\[\s*\]", "", title)  # brackets around nothing
+    title = re.sub(r"\(\s+", "(", title)
+    title = re.sub(r"\s+\)", ")", title)
+    title = re.sub(r"\s*[-–—]\s*$", "", title)  # a dangling separator
+    return " ".join(title.split()).strip()
 
 
 #: Google's own limits on the reminders field.

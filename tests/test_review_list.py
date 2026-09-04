@@ -131,6 +131,29 @@ def test_a_city_is_used_when_the_station_name_was_discarded():
     assert "→ New York" in event_summary(leg)
 
 
+def test_a_title_does_not_show_brackets_around_a_missing_number():
+    """An unread flight number turned "(BA 117)" into "(BA )"."""
+    from wayfare.render import event_summary
+
+    assert event_summary(flight(number=None)) == "LHR → New York (BA)"
+
+
+def test_a_leg_with_no_service_number_is_held():
+    from wayfare.validate import resolve
+
+    leg = flight(number=None)
+    resolve.run(trip(leg))
+    assert any(i.code == "leg.no_service_number" for i in leg.issues)
+
+
+def test_a_leg_with_its_number_is_not_held_for_that():
+    from wayfare.validate import resolve
+
+    leg = flight()
+    resolve.run(trip(leg))
+    assert not any(i.code == "leg.no_service_number" for i in leg.issues)
+
+
 def test_a_place_with_nothing_known_still_says_so():
     assert Place().label() == "?"
 

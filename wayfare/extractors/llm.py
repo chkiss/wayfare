@@ -266,6 +266,7 @@ def extract(
     ocr_confidence: float | None = None,
     only: list[str] | None = None,
     expect: list[str] | None = None,
+    insist: bool = False,
 ) -> list[Record]:
     """Ask the configured model to structure already-extracted text.
 
@@ -295,6 +296,15 @@ def extract(
             "record, with that leg's own airports, dates and times. Ignore any that "
             "turn out to be a fare code, a phone number or a ticket number. Do not "
             "invent a record for one you cannot find the details of."
+        )
+
+    if insist:
+        prompt_text = (
+            f"{text}\n\n--- follow-up ---\n"
+            "A first reading of this document found no booking at all, and that is "
+            "wrong: it describes a journey. Find the service, the two places and the "
+            "times, and return a record. If a date gives no year, take the year from "
+            "elsewhere in the document, such as the issue date."
         )
 
     if only:

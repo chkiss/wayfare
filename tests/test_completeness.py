@@ -307,6 +307,62 @@ def test_no_second_pass_when_nothing_is_missing():
     assert recovered == [] and called == []
 
 
+def test_a_travel_document_that_yielded_nothing_is_read_again():
+    """A Delta receipt produced no records at all; six later calls all worked."""
+    from wayfare import pipeline
+    from wayfare.ingest import ingest_text
+
+    asked = {}
+
+    def fake_extract(text, source_file, confidence, insist=False, **kwargs):
+        asked["insist"] = insist
+        return [flight()] if insist else []
+
+    trip = Itinerary()
+    text = "Flight DELTA 273 departs LISBON, PT 09:55AM arrives NYC-KENNEDY 12:58PM"
+
+    import pytest as _pytest
+
+    monkeypatch = _pytest.MonkeyPatch()
+    monkeypatch.setattr(pipeline.llm_extractor, "extract", fake_extract)
+    try:
+        recovered = pipeline._second_pass_for_nothing_at_all(
+            text, ingest_text(text, "pasted text"), trip
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert asked["insist"] is True
+    assert len(recovered) == 1
+    assert any(i.code == "llm.second_pass" for i in trip.issues)
+
+
+def test_a_document_about_nothing_is_not_read_again():
+    """An empty screenshot is not worth a second model call."""
+    from wayfare import pipeline
+    from wayfare.ingest import ingest_text
+
+    called = []
+
+    def fake_extract(*args, **kwargs):
+        called.append(True)
+        return []
+
+    import pytest as _pytest
+
+    monkeypatch = _pytest.MonkeyPatch()
+    monkeypatch.setattr(pipeline.llm_extractor, "extract", fake_extract)
+    try:
+        text = "Shopping list: milk, bread, 4 apples"
+        pipeline._second_pass_for_nothing_at_all(
+            text, ingest_text(text, "note.png"), Itinerary()
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert called == []
+
+
 def test_a_failed_second_pass_leaves_the_warning_standing():
     """The check is the safety net; the retry is the convenience."""
     from wayfare import pipeline

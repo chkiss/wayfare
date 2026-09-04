@@ -218,7 +218,31 @@ def run(itinerary: Itinerary) -> Itinerary:
 
         _flag_missing_zone(record)
         _flag_unnamed_endpoint(record)
+        _flag_missing_service_number(record)
     return itinerary
+
+
+def _flag_missing_service_number(record) -> None:
+    """A leg with no service number is not identifiable, and looks it.
+
+    Held rather than written, because a flight number is how you find the leg
+    again at the airport, and its absence usually means the reading was partial
+    rather than that the ticket omitted it.
+    """
+    if not isinstance(record, (FlightRecord, TrainRecord)):
+        return
+    if getattr(record, "number", None):
+        return
+    operator = getattr(record, "carrier", None) or getattr(record, "operator", None)
+    if not operator:
+        return  # Neither read: already reported as an unnamed journey.
+    record.add_issue(
+        IssueLevel.WARN,
+        "leg.no_service_number",
+        f"The {operator} service number was not read from the document. Add it before "
+        "adding this to your calendar, or you will not be able to find the leg again.",
+        SOURCE,
+    )
 
 
 def _flag_unnamed_endpoint(record) -> None:

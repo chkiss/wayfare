@@ -57,6 +57,44 @@ def process_text(text: str, source_name: str = "-", existing_events=None) -> Iti
     return _process(ingest_text(text, source_name), source_path=None, existing_events=existing_events)
 
 
+def _second_pass_for_nothing_at_all(
+    text: str, ingested: Ingested, itinerary: Itinerary
+) -> list[Record]:
+    """Ask again when a plainly travel-shaped document yielded nothing.
+
+    Free models occasionally return an empty list for a document they read
+    correctly a moment earlier — measured on one Delta receipt: six identical
+    calls all succeeded, while the submission that prompted them produced
+    nothing at all. Nothing in the itinerary can catch that, because there is
+    no record to check.
+
+    The missing-leg pass cannot help here either. It works from services and
+    routes the document names, and this email writes neither: "DELTA 273" is
+    an airline's full name, and "NYC-KENNEDY" is not a coded route. So the
+    trigger is the absence itself, and the only evidence needed to act on it
+    is that the document is about travelling.
+    """
+    if not manifest.looks_like_transport(text):
+        return []
+
+    try:
+        found = llm_extractor.extract(
+            text, ingested.source_file, ingested.ocr_confidence, insist=True
+        )
+    except Exception:  # noqa: BLE001 - the "nothing found" error still stands
+        return []
+
+    if found:
+        itinerary.add_issue(
+            IssueLevel.INFO,
+            "llm.second_pass",
+            "The first reading found nothing in a document that describes a journey; "
+            f"asking again recovered {len(found)}.",
+            "pipeline",
+        )
+    return found
+
+
 def _second_pass_for_missing_legs(
     text: str,
     ingested: Ingested,
@@ -160,6 +198,8 @@ def _process(
                     model_text, ingested, candidates, itinerary, payloads
                 )
             )
+            if not candidates:
+                candidates.extend(_second_pass_for_nothing_at_all(model_text, ingested, itinerary))
         except llm_extractor.LLMUnavailable as exc:
             itinerary.add_issue(
                 IssueLevel.WARN,
