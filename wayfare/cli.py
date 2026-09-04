@@ -176,6 +176,81 @@ def cmd_learn(args) -> int:
     return 0
 
 
+def cmd_bench(args) -> int:
+    """Run the corpus and print what matched.
+
+    No pass mark. The output is a set of numbers to put beside the previous
+    set of numbers, because "did this change help" is the question a benchmark
+    can answer and "is this good" is not.
+    """
+    import json as jsonlib
+    from pathlib import Path
+
+    from . import bench
+
+    root = Path(args.corpus).expanduser()
+    if not root.is_dir():
+        print(f"No such corpus directory: {root}")
+        return 1
+
+    def tick(index, total, case):
+        if not args.json:
+            print(f"\r  {index}/{total} {case.name[:60]:<60}", end="", flush=True)
+
+    results = bench.run(
+        root, limit=args.limit, only=args.only, use_llm=args.llm, progress=tick
+    )
+    if not args.json:
+        print("\r" + " " * 72 + "\r", end="")
+
+    if not results:
+        print("No documents with answers found. Is this the extractordata directory?")
+        return 1
+
+    summary = bench.summarise(results)
+    if args.json:
+        print(jsonlib.dumps(summary, indent=2))
+        return 0
+
+    reading = "model + deterministic extractors" if args.llm else "deterministic extractors only"
+    print(f"{summary['documents']} documents, {reading}\n")
+
+    print(f"  {'category':<10} {'docs':>5} {'right count':>12} {'legs found':>12}")
+    for name, bucket in sorted(summary["categories"].items()):
+        share = f"{bucket['right_count']}/{bucket['documents']}"
+        legs = f"{bucket['found']}/{bucket['expected']}"
+        print(f"  {name:<10} {bucket['documents']:>5} {share:>12} {legs:>12}")
+
+    print("\n  field           correct")
+    for name, (got, total) in summary["fields"].items():
+        percent = f"{got / total:.0%}" if total else "—"
+        print(f"  {name:<15} {got:>4}/{total:<4} {percent:>5}")
+
+    if summary["errors"]:
+        print(f"\n  {summary['errors']} document(s) could not be read at all.")
+
+    if args.failures:
+        print("\n  worst documents:")
+        ranked = sorted(
+            results,
+            key=lambda r: (
+                r.error is None,
+                sum(g for g, _ in r.fields.values()) / max(1, sum(t for _, t in r.fields.values())),
+            ),
+        )
+        for result in ranked[:15]:
+            if result.error:
+                print(f"    {result.case.name:<50} {result.error[:40]}")
+            else:
+                got = sum(g for g, _ in result.fields.values())
+                total = sum(t for _, t in result.fields.values())
+                print(
+                    f"    {result.case.name:<50} {got}/{total} fields, "
+                    f"{result.found}/{result.expected_count} legs"
+                )
+    return 0
+
+
 def cmd_token(args) -> int:
     print(generate_token())
     return 0
@@ -254,6 +329,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("--write", metavar="PATH", help="Save the derived conventions to this file")
     p.set_defaults(func=cmd_learn)
+
+    p = sub.add_parser(
+        "bench", help="Score wayfare against a corpus of documents with known answers"
+    )
+    p.add_argument("corpus", help="Directory of documents each paired with a .json answer")
+    p.add_argument("--limit", type=int, help="Only the first N documents")
+    p.add_argument(
+        "--only",
+        choices=["flight", "train", "bus", "lodging", "mixed"],
+        help="Only documents of one kind",
+    )
+    p.add_argument(
+        "--llm",
+        action="store_true",
+        help="Ask the model too. Off by default: a free tier allows ~50 requests a day "
+        "and one document can cost six.",
+    )
+    p.add_argument("--json", action="store_true", help="Print the summary as JSON")
+    p.add_argument("--failures", action="store_true", help="List the documents that scored worst")
+    p.set_defaults(func=cmd_bench)
 
     sub.add_parser("token", help="Print a fresh random bearer token").set_defaults(func=cmd_token)
     sub.add_parser("doctor", help="Show which pipeline components are available").set_defaults(

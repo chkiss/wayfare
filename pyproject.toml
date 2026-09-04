@@ -17,6 +17,11 @@ dependencies = [
   "google-api-python-client>=2.120",
   "google-auth-oauthlib>=1.2",
   "google-auth-httplib2>=0.2",
+  # Reads Aztec and PDF417, which zbar does not: the Aztec square is on every
+  # European rail ticket and PDF417 on printed boarding passes. Without it the
+  # most reliable extractor in the pipeline silently skips most real tickets.
+  "zxing-cpp>=2.2",
+  "pillow>=10.0",
 ]
 
 [project.optional-dependencies]

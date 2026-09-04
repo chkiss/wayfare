@@ -60,25 +60,64 @@ def available() -> bool:
     return shutil.which(get_config().zbarimg_bin) is not None
 
 
-def scan_images(paths: list[Path]) -> list[str]:
-    """Decode every barcode found in the given images."""
-    cfg = get_config()
-    if not available():
+def _zxing(paths: list[Path]) -> list[str]:
+    """Decode with zxing-cpp, which reads the symbologies zbar cannot.
+
+    zbar handles QR and the retail linear codes. It does not decode **Aztec**
+    or **PDF417**, and between them those are most of the travel industry: the
+    Aztec square is what UIC 918.3 puts on every European rail ticket, and
+    PDF417 is what airlines print on paper boarding passes.
+
+    That gap was invisible. zbarimg exits 4 for "no barcode here", which is
+    also what it says about a page whose barcode it cannot read, so a rail
+    ticket and a blank page looked identical — and the pipeline fell back to
+    asking a model to read a document whose exact answer was sitting in a
+    square it had skipped. Measured on KItinerary's own boarding-pass sample:
+    zbar found nothing at 150, 300 and 600 dpi; zxing read it first time.
+    """
+    try:
+        import zxingcpp
+        from PIL import Image
+    except ImportError:
         return []
 
     payloads: list[str] = []
     for path in paths:
-        proc = subprocess.run(
-            [cfg.zbarimg_bin, "--raw", "-q", "--nodbus", str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        # zbarimg exits 4 when it simply found nothing; that is not an error.
-        if proc.returncode not in (0, 4):
+        try:
+            with Image.open(path) as image:
+                for result in zxingcpp.read_barcodes(image.convert("L")):
+                    if result.text and result.text.strip():
+                        payloads.append(result.text)
+        except Exception:  # noqa: BLE001 - an unreadable page is not a failure
             continue
-        payloads.extend(line for line in proc.stdout.splitlines() if line.strip())
     return payloads
+
+
+def scan_images(paths: list[Path]) -> list[str]:
+    """Decode every barcode found in the given images.
+
+    Both readers are used, because neither covers the other: zbar reads some
+    linear symbologies zxing is not built for, and zxing reads the Aztec and
+    PDF417 codes that carry every ticket worth having.
+    """
+    cfg = get_config()
+    payloads: list[str] = list(_zxing(paths))
+
+    if available():
+        for path in paths:
+            proc = subprocess.run(
+                [cfg.zbarimg_bin, "--raw", "-q", "--nodbus", str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # zbarimg exits 4 when it simply found nothing; that is not an error.
+            if proc.returncode not in (0, 4):
+                continue
+            payloads.extend(line for line in proc.stdout.splitlines() if line.strip())
+
+    # The same code read by both decoders is one barcode, not two.
+    return list(dict.fromkeys(payloads))
 
 
 def find_in_text(text: str) -> list[str]:

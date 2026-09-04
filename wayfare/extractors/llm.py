@@ -133,7 +133,8 @@ class LLMUnavailable(RuntimeError):
 
 
 def available() -> bool:
-    return bool(get_config().llm_api_key)
+    cfg = get_config()
+    return bool(cfg.llm_api_key) and not cfg.llm_disabled
 
 
 # --- setup helpers -------------------------------------------------------

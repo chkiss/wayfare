@@ -203,6 +203,18 @@ class Config:
         return os.environ.get("WAYFARE_LLM_API_KEY") or _read_secret(self.secrets_dir / "llm_api_key")
 
     @property
+    def llm_disabled(self) -> bool:
+        """Skip the model entirely, key or no key.
+
+        Deleting the key is not a way to ask for this — the key lives in the
+        secrets directory and the environment cannot unset it. Benchmarking a
+        corpus needs the deterministic extractors on their own, and on a free
+        tier capped at 50 requests a day, running a hundred documents through
+        a model by accident spends the whole day's budget in a minute.
+        """
+        return os.environ.get("WAYFARE_DISABLE_LLM", "").strip().lower() in {"1", "true", "yes"}
+
+    @property
     def schedule_api_key(self) -> str | None:
         return os.environ.get("WAYFARE_SCHEDULE_API_KEY") or _read_secret(
             self.secrets_dir / "schedule_api_key"
