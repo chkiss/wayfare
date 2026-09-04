@@ -23,6 +23,7 @@ from pathlib import Path
 from .extractors import barcode as barcode_extractor
 from .extractors import kitinerary as kitinerary_extractor
 from .extractors import llm as llm_extractor
+from . import manifest
 from .ingest import Ingested, ingest, ingest_text
 from .schema import (
     FlightRecord,
@@ -57,7 +58,11 @@ def process_text(text: str, source_name: str = "-", existing_events=None) -> Iti
 
 
 def _second_pass_for_missing_legs(
-    text: str, ingested: Ingested, candidates: list[Record], itinerary: Itinerary
+    text: str,
+    ingested: Ingested,
+    candidates: list[Record],
+    itinerary: Itinerary,
+    payloads: list[str],
 ) -> list[Record]:
     """Go back for a leg the document lists and the first reading missed.
 
@@ -70,7 +75,9 @@ def _second_pass_for_missing_legs(
     one names the flight number to find. It costs a second model call only when
     a deterministic check has already proved something is absent.
     """
-    missing = completeness.missing_designators(text, candidates)
+    missing = completeness.missing_journeys(
+        text, candidates, barcode_payloads=payloads, pages=len(ingested.image_paths)
+    )
     if not missing:
         return []
 
@@ -143,11 +150,15 @@ def _process(
                     model_text,
                     ingested.source_file,
                     ingested.ocr_confidence,
-                    expect=completeness.services_in(model_text),
+                    expect=manifest.read(
+                        model_text, payloads, len(ingested.image_paths)
+                    ).named,
                 )
             )
             candidates.extend(
-                _second_pass_for_missing_legs(model_text, ingested, candidates, itinerary)
+                _second_pass_for_missing_legs(
+                    model_text, ingested, candidates, itinerary, payloads
+                )
             )
         except llm_extractor.LLMUnavailable as exc:
             itinerary.add_issue(

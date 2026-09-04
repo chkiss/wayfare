@@ -190,6 +190,39 @@ def test_a_leading_zero_is_not_a_different_flight():
     assert not trip.issues
 
 
+def test_a_missing_rail_leg_is_caught_by_route_count():
+    """A train number is bare, so only the routes can notice this."""
+    from wayfare.schema import TrainRecord
+
+    text = "BOS » NYP  10:26\nNYP » WAS  15:05\nTRAIN NORTHEAST REGIONAL"
+    leg = TrainRecord(
+        operator="Amtrak",
+        number="85",
+        origin=Place(name="South Station", city="Boston"),
+        destination=Place(name="Penn Station", city="New York"),
+        departure=LocalTime(local=datetime(2026, 9, 8, 10, 26), timezone="America/New_York"),
+        provenance=Provenance(extractor="llm"),
+    )
+    trip = completeness.run(itinerary([leg], text=text))
+    assert any(i.code == "itinerary.leg_possibly_missing" for i in trip.issues)
+
+
+def test_a_complete_rail_ticket_is_not_flagged():
+    """One route, one record. The real Amtrak ticket, which must stay clean."""
+    from wayfare.schema import TrainRecord
+
+    text = "BBY » NYP One-Way\nTRAIN NORTHEAST REGIONAL\n85 Sep 8, 2026 10:26 AM 2:29 PM"
+    leg = TrainRecord(
+        operator="Amtrak",
+        number="85",
+        origin=Place(name="Back Bay Station", city="Boston"),
+        destination=Place(name="Penn Station", city="New York"),
+        departure=LocalTime(local=datetime(2026, 9, 8, 10, 26), timezone="America/New_York"),
+        provenance=Provenance(extractor="llm"),
+    )
+    assert not completeness.run(itinerary([leg], text=text)).issues
+
+
 def test_no_source_text_means_no_opinion():
     trip = Itinerary()
     trip.records = [flight()]
@@ -236,7 +269,7 @@ def test_the_second_pass_asks_only_for_what_is_missing():
     monkeypatch.setattr(pipeline.llm_extractor, "extract", fake_extract)
     try:
         recovered = pipeline._second_pass_for_missing_legs(
-            RECEIPT, ingested, [flight(number="120")], trip
+            RECEIPT, ingested, [flight(number="120")], trip, []
         )
     finally:
         monkeypatch.undo()
@@ -266,6 +299,7 @@ def test_no_second_pass_when_nothing_is_missing():
             ingest_text(RECEIPT, "ticket.pdf"),
             [flight(number="120"), flight(number="246")],
             Itinerary(),
+            [],
         )
     finally:
         monkeypatch.undo()
@@ -288,7 +322,7 @@ def test_a_failed_second_pass_leaves_the_warning_standing():
     try:
         assert (
             pipeline._second_pass_for_missing_legs(
-                RECEIPT, ingest_text(RECEIPT, "ticket.pdf"), [flight()], Itinerary()
+                RECEIPT, ingest_text(RECEIPT, "ticket.pdf"), [flight()], Itinerary(), []
             )
             == []
         )
