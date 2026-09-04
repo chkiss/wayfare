@@ -100,6 +100,8 @@ def test_discovery_is_delegated_to_the_shared_library(monkeypatch):
     from wayfare.vendor import modelchain
 
     monkeypatch.undo()  # The fixture stubs llm.free_models; this test wants the real one.
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "")  # One endpoint, as this test means.
+    config._config = None
     monkeypatch.setattr(modelchain, "free_models", lambda base_url: ["from/library:free"])
     assert llm.free_models() == ["from/library:free"]
 

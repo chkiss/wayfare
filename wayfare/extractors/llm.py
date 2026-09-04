@@ -527,14 +527,34 @@ def _messages(text: str) -> list[dict]:
 
 
 def _post(model: str, text: str, cfg, messages: list[dict] | None = None) -> httpx.Response:
+    """One request, to whichever endpoint this model belongs to.
+
+    A model id may name its provider ("nous:tencent/hy3:free"); a bare one
+    belongs to the default. The endpoint, the key and any required headers all
+    follow from that, so adding a second provider does not mean a second code
+    path through here.
+    """
+    providers = cfg.providers
+    provider, name = providers.split(model)
+    base = providers.base_url(model) or cfg.llm_base_url
+    key = cfg.provider_key(provider)
+
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    # Nous rejects an untagged request outright. The tags are attribution, not
+    # identity: nothing here names the person using it.
+    tags = providers.tags(model)
+    if tags:
+        headers["X-Tags"] = ",".join(tags)
+
     return httpx.post(
-        f"{cfg.llm_base_url.rstrip('/')}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {cfg.llm_api_key}",
-            "Content-Type": "application/json",
-        },
+        f"{base.rstrip('/')}/chat/completions",
+        headers=headers,
         json={
-            "model": model,
+            # The bare id: the prefix is how wayfare addresses the endpoint,
+            # and the endpoint has never heard of it.
+            "model": name,
             "temperature": 0,
             "messages": messages if messages is not None else _messages(text),
         },
@@ -557,9 +577,34 @@ UNUSABLE = {
 
 
 def free_models(cfg=None) -> list[str]:
-    """Models the provider currently offers at no cost, and that we can use."""
+    """Free models across every enabled endpoint, best first.
+
+    Interleaved rather than one endpoint's whole catalogue and then the next,
+    because the point of a second provider is that it is not having the same
+    day as the first. Measured: an entire day's free budget was spent on one
+    endpoint — every model answering "rate limited" and the document reported
+    unreadable — while another answered in under a second.
+
+    An endpoint that cannot be reached contributes nothing and costs nothing;
+    discovery is a convenience and must never be why a call does not happen.
+    """
     cfg = cfg or get_config()
-    return [m for m in modelchain.free_models(cfg.llm_base_url) if m not in UNUSABLE]
+    providers = cfg.providers
+
+    catalogue: dict[str, list[str]] = {}
+    for name in cfg.enabled_providers:
+        base = providers.conf(name).get("api_base")
+        if not base:
+            continue
+        try:
+            found = modelchain.free_models(base)
+        except Exception:  # noqa: BLE001 - one endpoint being down is not a failure
+            continue
+        usable = [m for m in found if providers.qualify(name, m) not in UNUSABLE]
+        if usable:
+            catalogue[name] = usable
+
+    return [m for m in providers.spread(catalogue) if m not in UNUSABLE]
 
 
 def _bench(cfg=None):

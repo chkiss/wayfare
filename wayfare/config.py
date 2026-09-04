@@ -128,6 +128,16 @@ class Config:
     llm_base_url: str = field(
         default_factory=lambda: os.environ.get("WAYFARE_LLM_BASE_URL", "https://openrouter.ai/api/v1")
     )
+    #: Extra endpoints to read documents with, as
+    #: ``name=https://host/v1[,name=...]``. Free tiers rotate and cap
+    #: independently, so the provider that is spent today is not the one that
+    #: will be spent tomorrow — measured, a whole day's free budget was gone on
+    #: one endpoint while another answered in under a second. modelchain ships
+    #: Zen, Nous and OpenRouter as known names, so listing a name alone is
+    #: enough to turn one on.
+    llm_extra_providers: str = field(
+        default_factory=lambda: os.environ.get("WAYFARE_LLM_PROVIDERS", "zen")
+    )
     llm_timeout: float = field(default_factory=lambda: float(os.environ.get("WAYFARE_LLM_TIMEOUT", "90")))
     #: How many other free models to fall back to when the chosen one is busy.
     llm_fallbacks: int = field(
@@ -201,6 +211,58 @@ class Config:
     def llm_api_key(self) -> str | None:
         """Model API key, from the environment or the secrets directory."""
         return os.environ.get("WAYFARE_LLM_API_KEY") or _read_secret(self.secrets_dir / "llm_api_key")
+
+    def provider_key(self, name: str) -> str | None:
+        """The key for one endpoint, or None where it needs none.
+
+        Each provider keeps its key beside the others under its own name, so
+        adding a second endpoint is dropping a file in rather than editing
+        anything. The unnamed key stays the default provider's, which is what
+        every install written before this had.
+        """
+        return (
+            os.environ.get(f"WAYFARE_LLM_KEY_{name.upper()}")
+            or _read_secret(self.secrets_dir / f"llm_api_key.{name}")
+            or (self.llm_api_key if name == self.default_provider else None)
+        )
+
+    @property
+    def default_provider(self) -> str:
+        return self.providers.default
+
+    @property
+    def providers(self):
+        """Every endpoint this install may read documents with."""
+        from .vendor import modelchain
+
+        configured: dict[str, dict] = {}
+        for item in (self.llm_extra_providers or "").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            name, _, url = item.partition("=")
+            configured.setdefault(name.strip(), {})
+            if url.strip():
+                configured[name.strip()]["api_base"] = url.strip()
+
+        return modelchain.Providers(configured, base_url=self.llm_base_url)
+
+    @property
+    def enabled_providers(self) -> list[str]:
+        """The endpoints to actually read with, default first.
+
+        modelchain knows the address of every provider it ships, which is not
+        the same as being allowed to use it: one of them wants a key nobody
+        here has. So an endpoint is used only when it is named here, and the
+        default — the single endpoint every earlier install had — is always
+        first.
+        """
+        names = [self.default_provider]
+        for item in (self.llm_extra_providers or "").split(","):
+            name = item.partition("=")[0].strip()
+            if name and name not in names:
+                names.append(name)
+        return names
 
     @property
     def llm_disabled(self) -> bool:

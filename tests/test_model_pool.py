@@ -2,6 +2,7 @@
 
 import pytest
 
+import wayfare.config as config
 from wayfare.extractors import llm
 
 def test_models_that_refuse_this_kind_of_client_are_not_offered(monkeypatch):
@@ -13,6 +14,8 @@ def test_models_that_refuse_this_kind_of_client_are_not_offered(monkeypatch):
     asking again tomorrow. Measured: they took two of the four slots a quorum
     of two asks for, on every upload.
     """
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "")  # One endpoint, as this test means.
+    config._config = None
     monkeypatch.setattr(
         llm.modelchain,
         "free_models",
@@ -27,6 +30,10 @@ def test_models_that_refuse_this_kind_of_client_are_not_offered(monkeypatch):
 
 
 def test_the_quorum_pool_skips_them_too(monkeypatch):
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "")  # One endpoint, as this test means.
+    config._config = None
+    monkeypatch.setenv("WAYFARE_LLM_PROVIDERS", "")
+    config._config = None
     monkeypatch.setattr(
         llm.modelchain,
         "free_models",
