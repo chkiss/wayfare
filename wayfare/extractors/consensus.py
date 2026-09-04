@@ -252,7 +252,14 @@ def reconcile(
 
     for record, _, disputes in outstanding:
         for dispute in disputes:
-            dispute["material"] = _changes_the_event(record, dispute)
+            # Only the text disputes are tried both ways. The rest hold real
+            # objects — a disputed departure is two `LocalTime`s — and the
+            # values here are rendered strings, so assigning one back would
+            # put a string where a datetime belongs. A disputed time is
+            # material anyway: it is what a calendar entry is for.
+            dispute["material"] = (
+                _changes_the_event(record, dispute) if dispute["text"] else True
+            )
 
     resolved = _ask_the_reader(outstanding, source_text, conversation, adjudicator)
 
