@@ -99,6 +99,79 @@ def test_another_airlines_codes_are_not_our_missing_legs():
     assert not trip.issues
 
 
+def test_a_time_of_day_is_not_a_service():
+    """"10:26 AM 2:29 PM" read as service AM2 and held every Amtrak ticket."""
+    text = "85 Sep 8, 2026 10:26 AM 2:29 PM"
+    assert completeness.services_in(text) == []
+
+
+# --- counting first ------------------------------------------------------
+
+
+def test_the_document_is_counted_before_anyone_reads_it():
+    """The scan is deterministic, so the reader can be given a checklist."""
+    assert completeness.services_in(RECEIPT) == ["S4120", "S4246"]
+
+
+def test_the_checklist_reaches_the_model():
+    from wayfare.extractors import llm
+
+    seen = {}
+
+    def fake_call(text, cfg):
+        seen["prompt"] = text
+        return {"records": []}, "model:free"
+
+    import pytest as _pytest
+
+    monkeypatch = _pytest.MonkeyPatch()
+    monkeypatch.setattr(llm, "_call_model", fake_call)
+    monkeypatch.setattr(llm, "get_config", lambda: _KeyedConfig())
+    try:
+        llm.extract(RECEIPT, "ticket.pdf", None, expect=["S4120", "S4246"])
+    finally:
+        monkeypatch.undo()
+
+    assert "checklist" in seen["prompt"]
+    assert "S4246" in seen["prompt"]
+
+
+def test_a_document_with_no_services_gets_no_checklist():
+    from wayfare.extractors import llm
+
+    seen = {}
+
+    def fake_call(text, cfg):
+        seen["prompt"] = text
+        return {"records": []}, "model:free"
+
+    import pytest as _pytest
+
+    monkeypatch = _pytest.MonkeyPatch()
+    monkeypatch.setattr(llm, "_call_model", fake_call)
+    monkeypatch.setattr(llm, "get_config", lambda: _KeyedConfig())
+    try:
+        llm.extract("Hotel Example, 4-8 March", "hotel.eml", None, expect=[])
+    finally:
+        monkeypatch.undo()
+
+    assert "checklist" not in seen["prompt"]
+
+
+def test_every_leg_missing_is_caught_even_with_nothing_to_anchor_on():
+    """No transport record at all leaves no carrier to filter by, and that is
+    the most serious version of this failure, not a reason to stay quiet."""
+    stay = LodgingRecord(
+        property_name="Hotel Example",
+        location=Place(name="Hotel Example", city="Lisbon"),
+        check_in=LocalTime(local=datetime(2026, 9, 21, 15, 0), timezone="Europe/Lisbon"),
+        check_out=LocalTime(local=datetime(2026, 9, 23, 11, 0), timezone="Europe/Lisbon"),
+        provenance=Provenance(extractor="llm"),
+    )
+    trip = completeness.run(itinerary([stay]))
+    assert any(i.code == "itinerary.leg_possibly_missing" for i in trip.issues)
+
+
 def test_a_hotel_booking_is_not_checked_for_flight_numbers():
     stay = LodgingRecord(
         property_name="Hotel Example",

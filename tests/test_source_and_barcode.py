@@ -101,7 +101,7 @@ def test_a_barcode_that_is_not_a_boarding_pass_reaches_the_reader(monkeypatch):
     """A rail QR code is machine-written text about this exact booking."""
     seen = {}
 
-    def capture(text, source_file, confidence):
+    def capture(text, source_file, confidence, expect=None, only=None):
         seen["text"] = text
         return []
 

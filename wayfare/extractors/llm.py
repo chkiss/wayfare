@@ -265,13 +265,17 @@ def extract(
     source_file: str,
     ocr_confidence: float | None = None,
     only: list[str] | None = None,
+    expect: list[str] | None = None,
 ) -> list[Record]:
     """Ask the configured model to structure already-extracted text.
 
-    ``only`` names services a first pass missed. Being told which flight number
-    to look for turns an open-ended reading task into a search, which is a far
-    easier thing to get right — and it is asked only when a deterministic check
-    has proved something is absent.
+    ``expect`` names services found in the document by a deterministic scan
+    before this was called. Handed over as a checklist, it turns open-ended
+    reading into verification, which is a far easier thing to get right — and
+    it prevents a dropped leg rather than detecting one afterwards.
+
+    ``only`` is the same information used the other way round, after a leg was
+    dropped despite that: read this service and nothing else.
     """
     cfg = get_config()
     if not cfg.llm_api_key:
@@ -283,6 +287,16 @@ def extract(
     # is checked against. Otherwise the model could quote my own instruction
     # back at me and every field in the second pass would verify itself.
     prompt_text = text
+    if expect and not only:
+        prompt_text = (
+            f"{text}\n\n--- checklist ---\n"
+            f"A scan of this document found these service numbers: {', '.join(expect)}.\n"
+            "Each one that is a real flight, train or coach service needs its own "
+            "record, with that leg's own airports, dates and times. Ignore any that "
+            "turn out to be a fare code, a phone number or a ticket number. Do not "
+            "invent a record for one you cannot find the details of."
+        )
+
     if only:
         prompt_text = (
             f"{text}\n\n--- follow-up ---\n"

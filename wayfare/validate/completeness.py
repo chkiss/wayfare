@@ -23,16 +23,51 @@ from ..schema import FlightRecord, IssueLevel, Itinerary, TrainRecord
 SOURCE = "completeness"
 
 #: An IATA-style designator: a two-character carrier code (letters, or a letter
-#: and a digit) then one to four digits. Anchored on a word boundary and
+#: and a digit) then two to four digits. Anchored on a word boundary and
 #: required to be followed by one, so dates, prices and phone numbers do not
 #: match.
-_DESIGNATOR_RE = re.compile(r"\b([A-Z][A-Z0-9]|[0-9][A-Z])\s?(\d{1,4})\b")
+#:
+#: Two digits minimum, not one, because "10:26 AM 2:29 PM" otherwise reads as
+#: service "AM2" and every Amtrak ticket gets held for a leg that does not
+#: exist. The cost is a genuine single-digit flight number like QF 8, which is
+#: rare; the benefit is that the check can be trusted enough to act on.
+_DESIGNATOR_RE = re.compile(r"\b([A-Z][A-Z0-9]|[0-9][A-Z])\s?(\d{2,4})\b")
 
 #: Strings that look exactly like a designator but never are. Ticket numbers,
 #: terminals and class codes sit next to real ones on the same page.
 _NOT_A_SERVICE = re.compile(
     r"(terminal|class|classe|gate|seat|pc|kg|lbs?|eur|usd|tel|fax)\W{0,3}$", re.I
 )
+
+
+#: Words that mean the document describes a journey rather than mentioning one.
+#: Several languages, because a ticket is printed in the airline's and the
+#: passenger's: this list is from a Portuguese and English SATA receipt.
+_TRANSPORT_WORDS = re.compile(
+    r"\b(flight|voo|vol|flug|vuelo|volo|train|comboio|coach|ferry|"
+    r"depart|departure|partida|arrival|chegada|boarding|embarque|"
+    r"check-?in|gate|terminal|airline|airways|aeroport|airport|aeroporto)\b",
+    re.I,
+)
+
+
+def _looks_like_transport(text: str) -> bool:
+    return bool(_TRANSPORT_WORDS.search(text))
+
+
+def services_in(text: str) -> list[str]:
+    """The services a document names, read before any model sees it.
+
+    Deterministic, so it is worth knowing *first*: telling the reader that this
+    page contains S4246 and S4120 turns an open-ended reading task into a
+    checklist, which is a far easier thing to get right than noticing a second
+    block halfway down a jumbled table.
+
+    Only reliable where services carry a carrier code. A train number is bare —
+    Amtrak's is just "85" — and nothing here will find it, so rail documents
+    are not covered by this and must not pretend to be.
+    """
+    return sorted(_designators_in(text))
 
 
 def _designators_in(text: str) -> set[str]:
@@ -68,17 +103,24 @@ def missing_designators(text: str, records: list) -> list[str]:
     trip = Itinerary()
     trip.records = list(records)
     claimed = _designators_claimed(trip)
-    if not claimed:
-        # Nothing to compare against: a lodging booking, or a document whose
-        # legs carry no numbers. Counting designators here would be noise.
-        return []
+    printed = _designators_in(text)
 
-    # Only designators sharing a carrier with something we did extract. Any
-    # other two-letter-plus-digits string on the page is a fare code, a phone
-    # extension or a form number, and guessing otherwise would hold every
-    # clean submission.
+    if not claimed:
+        # Nothing was extracted to anchor a carrier on, which is the most
+        # serious version of this failure — every leg missing, not one — so it
+        # is reported rather than skipped. But only for a document that is
+        # about travelling: "ref AB 1234" on a hotel confirmation is a booking
+        # reference, and warning about it would hold every stay ever submitted.
+        if not _looks_like_transport(text):
+            return []
+        return sorted(printed)
+
+    # Otherwise only designators sharing a carrier with something we did
+    # extract. Any other two-letter-plus-digits string on the page is a fare
+    # code, a phone extension or a form number, and guessing otherwise would
+    # hold every clean submission.
     carriers = {code[:2] for code in claimed}
-    return sorted(code for code in _designators_in(text) - claimed if code[:2] in carriers)
+    return sorted(code for code in printed - claimed if code[:2] in carriers)
 
 
 def run(itinerary: Itinerary) -> Itinerary:

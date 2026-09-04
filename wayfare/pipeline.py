@@ -135,9 +135,15 @@ def _process(
     # 3. The model, over text only.
     if model_text.strip():
         try:
+            # Count the services in the document before anyone reads it. The
+            # model then has a checklist rather than an open-ended page, which
+            # is what stops a leg being dropped instead of catching it after.
             candidates.extend(
                 llm_extractor.extract(
-                    model_text, ingested.source_file, ingested.ocr_confidence
+                    model_text,
+                    ingested.source_file,
+                    ingested.ocr_confidence,
+                    expect=completeness.services_in(model_text),
                 )
             )
             candidates.extend(
