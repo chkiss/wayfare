@@ -384,7 +384,7 @@ def _group(readings: list[list[Record]]) -> list[list[Record]]:
             else:
                 by_service.setdefault(key, []).append(record)
 
-    groups = list(by_service.values())
+    groups = _fold_misread_numbers(list(by_service.values()))
     shapes = {_shape_identity(group[0]): group for group in groups}
 
     for record in unnumbered:
@@ -397,6 +397,37 @@ def _group(readings: list[list[Record]]) -> list[list[Record]]:
             shapes[shape] = new_group
 
     return groups
+
+
+def _fold_misread_numbers(groups: list[list[Record]]) -> list[list[Record]]:
+    """Join groups that are one journey read with two different numbers.
+
+    Grouping on the service number assumes the number is right. Measured on a
+    SATA receipt, it is not: one reading returned S4 246 and S4 120, the other
+    S4 4246 and S4 4120, having picked up a digit from the neighbouring column.
+    Two legs became four records, each labelled as a leg the other reading had
+    missed — the exact duplication consensus exists to prevent, caused by the
+    field it groups on.
+
+    Only numbers where one contains the other are folded, and only on the same
+    route and day. That is the shape of a misread digit; two genuinely
+    different services on one route rarely have nesting numbers, and if they
+    do, one merged record with the number in dispute is still a better answer
+    than two events for one flight.
+    """
+    folded: list[list[Record]] = []
+    for group in groups:
+        for existing in folded:
+            if _shape_identity(existing[0]) != _shape_identity(group[0]):
+                continue
+            mine = str(getattr(group[0], "number", "") or "").lstrip("0")
+            theirs = str(getattr(existing[0], "number", "") or "").lstrip("0")
+            if mine and theirs and (mine in theirs or theirs in mine):
+                existing.extend(group)
+                break
+        else:
+            folded.append(group)
+    return folded
 
 
 def _reconcile_one(

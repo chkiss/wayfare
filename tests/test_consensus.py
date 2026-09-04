@@ -421,3 +421,38 @@ def test_a_disputed_time_is_never_offered_as_a_text_choice():
     (record,) = consensus.reconcile([[early], [late]], MODELS)
     assert "consensus.models_disagree" in [i.code for i in record.issues]
     assert not record.disputes
+
+
+# --- one journey, two readings of its number ----------------------------
+
+
+def test_a_misread_digit_does_not_become_a_second_flight():
+    """Measured on a SATA receipt: S4 246 and S4 4246 are one leg, not two.
+
+    Grouping on the service number assumes the number is right. When it is
+    not, two legs became four records — each labelled as a leg the other
+    reading had missed.
+    """
+    short = flight(carrier="S4", number="246")
+    long = flight(carrier="S4", number="4246")
+
+    records = consensus.reconcile([[short], [long]], MODELS)
+    assert len(records) == 1
+    assert "consensus.one_model_only" not in [i.code for i in records[0].issues]
+
+
+def test_the_two_numbers_are_offered_rather_than_picked_between():
+    short = flight(carrier="S4", number="246")
+    long = flight(carrier="S4", number="4246")
+
+    (record,) = consensus.reconcile([[short], [long]], MODELS)
+    (dispute,) = [d for d in record.disputes if d["field"] == "number"]
+    assert set(dispute["values"]) == {"246", "4246"}
+
+
+def test_unrelated_numbers_on_one_route_stay_separate():
+    """Only a nested number is the shape of a misread digit."""
+    morning = flight(carrier="S4", number="246")
+    evening = flight(carrier="S4", number="871")
+
+    assert len(consensus.reconcile([[morning], [evening]], MODELS)) == 2

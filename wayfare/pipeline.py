@@ -17,6 +17,7 @@ show you.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +68,20 @@ def process_text(text: str, source_name: str = "-", existing_events=None) -> Iti
 def _read_with_models(
     text: str, ingested: Ingested, itinerary: Itinerary, payloads: list[str]
 ) -> list[Record]:
+    """Read the document, then hold every reading to the numbers on the page."""
+    expect = manifest.read(text, payloads, len(ingested.image_paths)).named
+    records = _read_with_models_uncorrected(text, ingested, itinerary, payloads, expect)
+    _correct_numbers_against_page(records, expect)
+    return records
+
+
+def _read_with_models_uncorrected(
+    text: str,
+    ingested: Ingested,
+    itinerary: Itinerary,
+    payloads: list[str],
+    expect: list[str],
+) -> list[Record]:
     """Read the document, with as many models as the quorum asks for.
 
     A quorum of one is the old behaviour exactly, chain and all. Above one, the
@@ -74,7 +89,6 @@ def _read_with_models(
     which is worth the second call because the failure that costs most here is
     a value one model simply left out.
     """
-    expect = manifest.read(text, payloads, len(ingested.image_paths)).named
     quorum = get_config().llm_quorum
     progress.report("Working out how many journeys are on the page")
 
@@ -154,6 +168,8 @@ def _read_with_models(
     # The first model to answer adjudicates, because it is the one still
     # holding the document and its own reading of it.
     progress.report(f"Comparing {len(readings)} readings")
+    for reading in readings:
+        _correct_numbers_against_page(reading, expect)
     exchange, adjudicator = next(
         ((c, m) for c, m in zip(conversations, used) if c), (None, None)
     )
@@ -164,6 +180,56 @@ def _read_with_models(
         conversation=exchange,
         adjudicator=adjudicator,
     )
+
+
+def _correct_numbers_against_page(records: list[Record], expect: list[str]) -> None:
+    """Put the service number back to what the document actually prints.
+
+    The receipt says "S4246". A model reading it as carrier "S4" and number
+    "4246" has taken the carrier's digit twice, and the result is a flight
+    number that is wrong but entirely plausible: it survives every check, it
+    was promoted at 0.95, and it sends you looking for a flight that does not
+    exist.
+
+    Nothing here needs a model. The designators were already scanned off the
+    page deterministically before anyone read it, so a number that no
+    designator supports — where one that differs only by the carrier's own
+    digits does — is corrected to the printed one. A number the page does not
+    mention at all is left alone: this repairs a misread, it does not
+    overwrite a leg the scan happened to miss.
+    """
+    if not expect:
+        return
+
+    printed: dict[str, set[str]] = {}
+    for designator in expect:
+        match = re.match(r"([A-Z0-9]{2})\s?(\d+)$", designator.strip().upper())
+        if match:
+            printed.setdefault(match.group(1), set()).add(match.group(2).lstrip("0"))
+
+    for record in records:
+        carrier = getattr(record, "carrier", None) or getattr(record, "operator", None)
+        number = str(getattr(record, "number", "") or "").strip().lstrip("0")
+        if not carrier or not number:
+            continue
+        candidates = printed.get(carrier.strip().upper()[:3], set())
+        if number in candidates:
+            continue
+
+        # Only a number the page's own reading is contained in: "246" inside
+        # the misread "4246". Anything else is a different service.
+        better = [c for c in candidates if c != number and c in number]
+        if len(better) != 1:
+            continue
+
+        record.number = better[0]
+        record.add_issue(
+            IssueLevel.INFO,
+            "leg.number_corrected_from_page",
+            f"The number was read as {number}, but the document prints "
+            f"{carrier}{better[0]}. Corrected to what is on the page.",
+            "pipeline",
+        )
 
 
 def _second_pass_for_nothing_at_all(

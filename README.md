@@ -27,10 +27,17 @@ failure of a free model is an *absent* one: a flight number left out, a leg of a
 two-flight receipt skipped, occasionally a whole document returning nothing at
 all. Those readings are consistent with the source, so no amount of checking
 against the source finds them. A second reading rarely drops the same field, so
-its answer fills the gap, and where the two disagree both values are put in
-front of you rather than picked between. Agreement is the only positive evidence
-in the pipeline; every other check can establish only that a record is not
+its answer fills the gap. Agreement is the only positive evidence in the
+pipeline; every other check can establish only that a record is not
 contradicted.
+
+Where the two readings differ, the model that read the document is asked which
+value the source supports, as a continuation of the same conversation, so it
+answers with the document and its own reading still in view. It may only pick
+from the two values already on the table, and it has to quote the line that
+decides it — a ruling it cannot point to is an opinion, and the dispute stands.
+Anything left standing becomes a choice on the review page, because the person
+holding the ticket can simply look.
 
 The two readings come from different models when the backend has two to spare.
 On a free tier it is usually one model asked twice, which catches the same
