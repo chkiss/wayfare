@@ -21,6 +21,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -49,6 +50,12 @@ class Job:
     status: int = 500
     finished_at: float | None = None
     history: list[str] = field(default_factory=list)
+    #: When the work began, on the server's clock. Handed to the page so that
+    #: if it loses the job it can ask whether a submission newer than this has
+    #: appeared, without either side trusting the browser's clock.
+    since: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
+    )
 
     def to_dict(self) -> dict:
         return {
@@ -60,6 +67,7 @@ class Job:
             "submission_id": self.submission_id,
             "error": self.error,
             "status": self.status,
+            "since": self.since,
             "history": list(self.history),
         }
 

@@ -219,6 +219,79 @@ def load(submission_id: str) -> dict | None:
         return None
 
 
+def note_duration(submission_id: str, seconds: float) -> None:
+    """Record how long this submission took to read.
+
+    Kept so the waiting page can be told what a normal wait looks like here,
+    measured on this machine with these models, rather than working from a
+    number somebody guessed.
+    """
+    cfg = get_config()
+    data = load(submission_id)
+    if data is None:
+        return
+    data["duration_seconds"] = round(seconds, 1)
+    (cfg.records_dir / f"{submission_id}.json").write_text(
+        json.dumps(data, indent=2), encoding="utf-8"
+    )
+
+
+#: Used until enough submissions have been timed to say anything. Deliberately
+#: short: it is how long a page waits before deciding a result is not coming.
+DEFAULT_WAIT_SECONDS = 5.0
+
+
+def typical_duration(sample: int = 20) -> float:
+    """How long a submission usually takes, from the ones actually measured.
+
+    The slowest of the recent ones rather than the average: this number is a
+    deadline for waiting, and a deadline set at the average is missed half the
+    time. Bounded at both ends, because one 40-second outlier should not make
+    every future page wait 40 seconds.
+    """
+    cfg = get_config()
+    if not cfg.records_dir.exists():
+        return DEFAULT_WAIT_SECONDS
+
+    paths = sorted(cfg.records_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    seen: list[float] = []
+    for path in paths[: sample * 2]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data.get("duration_seconds"), (int, float)):
+            seen.append(float(data["duration_seconds"]))
+        if len(seen) >= sample:
+            break
+
+    if len(seen) < 3:
+        return DEFAULT_WAIT_SECONDS
+    seen.sort()
+    ninetieth = seen[min(len(seen) - 1, int(len(seen) * 0.9))]
+    return max(3.0, min(30.0, ninetieth))
+
+
+def latest_submission(since: str | None = None) -> dict | None:
+    """The newest submission, optionally only if it is newer than `since`.
+
+    What answers "did the batch I lost track of actually finish?".
+    """
+    cfg = get_config()
+    if not cfg.records_dir.exists():
+        return None
+    paths = sorted(cfg.records_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in paths[:5]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if since and str(data.get("created", "")) < since:
+            continue
+        return data
+    return None
+
+
 def recent(limit: int = 25, include_discarded: bool = False) -> list[dict]:
     """Recent submissions, without the records you have already dealt with.
 

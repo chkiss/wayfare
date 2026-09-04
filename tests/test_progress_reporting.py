@@ -192,3 +192,83 @@ def test_a_batch_the_server_still_holds_is_submitted(client, monkeypatch):
     assert response.status_code == 200
     done = wait_for(response.json()["job"], client, lambda j: j["done"])
     assert done["submission_id"] == "sub-2"
+
+
+# --- losing the job without losing the work -----------------------------
+
+
+def test_a_finished_submission_is_found_after_the_job_is_gone(client, monkeypatch):
+    """Losing the job is not losing the work; the page is taken to the result."""
+    from wayfare.schema import Itinerary
+
+    monkeypatch.setattr(web, "_read_one", lambda path, name: Itinerary())
+    monkeypatch.setattr(web, "_recheck_with_calendar", lambda it: it)
+
+    real_commit = store.commit
+    submitted = client.post("/submit", data={"background": "1", "text": "a booking"})
+    since = submitted.json()["since"]
+    job_id = submitted.json()["job"]
+    wait_for(job_id, client, lambda j: j["done"])
+
+    found = client.get("/submissions", params={"since": since}).json()
+    assert found["submission_id"]
+    assert found["wait_seconds"] >= 3.0
+
+
+def test_an_older_submission_is_not_mistaken_for_this_one(client, monkeypatch):
+    """Otherwise a batch that died would open somebody's previous trip."""
+    from wayfare.schema import Itinerary
+
+    monkeypatch.setattr(web, "_read_one", lambda path, name: Itinerary())
+    monkeypatch.setattr(web, "_recheck_with_calendar", lambda it: it)
+    job = client.post("/submit", data={"background": "1", "text": "one"})
+    wait_for(job.json()["job"], client, lambda j: j["done"])
+
+    later = "2999-01-01T00:00:00+00:00"
+    assert client.get("/submissions", params={"since": later}).json()["submission_id"] is None
+
+
+def test_how_long_to_wait_is_measured_not_guessed(tmp_path, monkeypatch):
+    """The countdown comes from submissions actually read on this machine."""
+    import json as jsonlib
+
+    monkeypatch.setenv("WAYFARE_STATE_DIR", str(tmp_path / "state"))
+    import wayfare.config as config
+
+    config._config = None
+    records = config.get_config().records_dir
+    records.mkdir(parents=True, exist_ok=True)
+
+    for index, seconds in enumerate([4.0, 6.0, 8.0, 21.0, 9.0]):
+        (records / f"s{index}.json").write_text(
+            jsonlib.dumps({"submission_id": f"s{index}", "duration_seconds": seconds}),
+            encoding="utf-8",
+        )
+
+    # The slowest of them, not the average: this is a deadline for waiting.
+    assert store.typical_duration() == 21.0
+
+
+def test_an_unmeasured_machine_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("WAYFARE_STATE_DIR", str(tmp_path / "empty"))
+    import wayfare.config as config
+
+    config._config = None
+    assert store.typical_duration() == store.DEFAULT_WAIT_SECONDS
+
+
+def test_an_outlier_does_not_make_every_page_wait_for_it(tmp_path, monkeypatch):
+    import json as jsonlib
+
+    monkeypatch.setenv("WAYFARE_STATE_DIR", str(tmp_path / "slow"))
+    import wayfare.config as config
+
+    config._config = None
+    records = config.get_config().records_dir
+    records.mkdir(parents=True, exist_ok=True)
+    for index, seconds in enumerate([5.0, 6.0, 7.0, 400.0]):
+        (records / f"s{index}.json").write_text(
+            jsonlib.dumps({"submission_id": f"s{index}", "duration_seconds": seconds}),
+            encoding="utf-8",
+        )
+    assert store.typical_duration() == 30.0

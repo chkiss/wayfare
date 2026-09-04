@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 import shutil
 import tempfile
 import threading
@@ -445,10 +446,12 @@ async def _submit_in_background(request, uploads, text: str, held: list, session
 
     def work() -> None:
         token = progress.bind(job)
+        started = time.monotonic()
         try:
             submission = asyncio.run(
                 _run_submission([], text, allow_promote=True, staged=items)
             )
+            store.note_duration(submission.submission_id, time.monotonic() - started)
             progress.finish(job, submission.submission_id)
             if session:
                 staging.clear(session)
@@ -464,7 +467,7 @@ async def _submit_in_background(request, uploads, text: str, held: list, session
                 shutil.rmtree(workdir, ignore_errors=True)
 
     threading.Thread(target=work, daemon=True).start()
-    return JSONResponse({"job": job.id})
+    return JSONResponse({"job": job.id, "since": job.since})
 
 
 @app.get("/progress/{job_id}")
@@ -474,6 +477,29 @@ def job_progress(job_id: str, scope: Scope = Depends(require_owner)):
     if job is None:
         raise HTTPException(status_code=404, detail="No such job.")
     return JSONResponse(job.to_dict())
+
+
+@app.get("/submissions")
+def latest_submission(
+    since: str = "", scope: Scope = Depends(require_owner)
+):
+    """Did the batch this page lost track of finish, and how long is normal?
+
+    Losing the job is not the same as losing the work: the reading carries on
+    in a thread the page cannot see, and the result lands on disk a few
+    seconds later. So rather than telling somebody to go and look, the page
+    asks here until the submission appears and then goes to it.
+
+    `wait_seconds` is measured from submissions actually read on this machine,
+    not a number chosen to feel about right.
+    """
+    found = store.latest_submission(since or None)
+    return JSONResponse(
+        {
+            "submission_id": found["submission_id"] if found else None,
+            "wait_seconds": store.typical_duration(),
+        }
+    )
 
 
 @app.get("/submissions/{submission_id}", response_class=HTMLResponse)

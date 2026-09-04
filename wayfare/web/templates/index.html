@@ -374,7 +374,7 @@
   function post(body, retry) {
     fetch("/submit", { method: "POST", body })
       .then((response) => {
-        if (response.ok) return response.json().then((job) => watch(job.job));
+        if (response.ok) return response.json().then((job) => watch(job.job, job.since));
         if (response.status === 409 && retry) {
           return response.json().then((problem) => restage(problem.missing || []));
         }
@@ -422,7 +422,7 @@
   const POLL_MS = 500;
   const GIVE_UP_AFTER = 20; // ~30s of silence, with the backoff below.
 
-  function watch(id) {
+  function watch(id, since) {
     let misses = 0;
 
     const stop = (message) => {
@@ -435,10 +435,11 @@
       fetch("/progress/" + encodeURIComponent(id))
         .then((response) => {
           if (response.status === 404) {
-            // The job is gone: the server restarted, or it finished long
-            // enough ago to have been swept. Either way the result may well
-            // exist, so send them to it rather than implying a crash.
-            stop("Lost track of that batch. Check below — it may have finished.");
+            // The job is gone — the server restarted, or a finished one was
+            // swept — but losing the job is not losing the work. The reading
+            // carries on in a thread this page cannot see and lands on disk
+            // seconds later, so wait for the result and go to it.
+            recover(since);
             return null;
           }
           if (!response.ok) return Promise.reject(response);
@@ -459,7 +460,7 @@
         .catch(() => {
           misses += 1;
           if (misses >= GIVE_UP_AFTER) {
-            stop("Lost contact with the server. It may still be working — reload to check.");
+            recover(since);
             return;
           }
           // Backing off, so a restarting server is waited out rather than
@@ -468,6 +469,45 @@
         });
     };
     poll();
+  }
+
+  // Losing the job is not losing the batch. Ask whether a submission newer
+  // than this one's start has landed, once a second, and go to it the moment
+  // it does. How long to keep asking is the server's answer, measured from
+  // submissions actually read on this machine rather than a guess about how
+  // slow a free model is today.
+  function recover(since) {
+    let left = null;
+
+    const look = () => {
+      fetch("/submissions?since=" + encodeURIComponent(since || ""))
+        .then((response) => (response.ok ? response.json() : Promise.reject(response)))
+        .then((found) => {
+          if (found.submission_id) {
+            say("Found it. Opening the review screen");
+            window.location = "/submissions/" + found.submission_id;
+            return;
+          }
+          if (left === null) left = Math.ceil(found.wait_seconds || 5);
+          if (left <= 0) {
+            stopRecovery();
+            return;
+          }
+          say("Lost track of that batch — checking for the result (" + left + ")");
+          left -= 1;
+          setTimeout(look, 1000);
+        })
+        .catch(stopRecovery);
+    };
+
+    say("Lost track of that batch — checking for the result");
+    look();
+  }
+
+  function stopRecovery() {
+    say("That batch did not finish. Press the button to send it again.");
+    status.classList.add("failed");
+    submit.disabled = false;
   }
 
   ready();
