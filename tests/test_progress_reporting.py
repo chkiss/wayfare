@@ -138,3 +138,15 @@ def test_progress_is_owner_only(client):
 
 def test_an_unknown_job_is_a_404(client):
     assert client.get("/progress/deadbeef").status_code == 404
+
+
+def test_the_working_panel_is_hidden_until_something_is_running(client):
+    """A display rule silently beats the `hidden` attribute, and did.
+
+    The panel sat on the home page saying "Working" with nothing running,
+    because `.working { display: flex }` outranks `[hidden]`.
+    """
+    body = client.get("/", headers={"accept": "text/html"}).text
+    assert 'id="working"' in body and "hidden" in body
+    # The rule that makes the attribute mean what it says.
+    assert "[hidden] { display: none !important; }" in body

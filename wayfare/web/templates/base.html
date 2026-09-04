@@ -148,6 +148,11 @@
   }
   /* Finished uploading: the ring has done its job and would only be clutter. */
   .tile.done .ring, .tile.failed .ring { display: none; }
+  /* Every layout rule below sets a display, which silently beats the `hidden`
+     attribute — that is how the progress panel came to sit on the page saying
+     "Working" while nothing was running. */
+  [hidden] { display: none !important; }
+
   /* What the server is doing, while it does it. */
   .working {
     display: flex; align-items: center; gap: .6rem;

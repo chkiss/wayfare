@@ -337,10 +337,13 @@ def _report(
         record.add_issue(
             IssueLevel.INFO,
             "consensus.resolved_by_model",
-            "The readings differed about "
-            + "; ".join(f"{d['field']} (kept '{resolved[id(d)]}')" for d in settled)
-            + ". The model that read the document was asked which the source "
-            "supports, and had to quote the line that decided it.",
+            "Settled against the source: "
+            + "; ".join(
+                f"{d['field']} '{resolved[id(d)]}' over "
+                + " or ".join(f"'{v}'" for v in d["values"] if v != resolved[id(d)])
+                for d in settled
+            )
+            + ".",
             SOURCE,
         )
 
