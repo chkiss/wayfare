@@ -257,7 +257,9 @@ Airport data from [OurAirports](https://ourairports.com/data/) (public domain).
 Airline names from [OpenTravelData](https://github.com/opentraveldata/opentraveldata)
 (CC-BY). European station names, UIC codes and timezones from
 [Trainline](https://github.com/trainline-eu/stations) (ODbL — modifications to
-the data must be published, so nothing here modifies it). Optional document
+the data must be published, so nothing here modifies it). US stations from
+[Amtrak's published GTFS feed](https://content.amtrak.com/content/gtfs/GTFS.zip),
+which is where "NYP" becomes Penn Station and its timezone. Optional document
 parsing by [KItinerary](https://invent.kde.org/pim/kitinerary) (LGPL).
 
 None of those datasets is committed here. `wayfare fetch-airports` and

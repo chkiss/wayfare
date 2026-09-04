@@ -42,11 +42,19 @@ AIRLINES_URL = (
 )
 #: Trainline's European station list. ODbL.
 STATIONS_URL = "https://raw.githubusercontent.com/trainline-eu/stations/master/stations.csv"
+#: Amtrak's own GTFS feed. Trainline is Europe only, and "NYP" — the code on
+#: every Amtrak ticket into New York — resolved to nothing at all without it.
+#: Published by Amtrak for public use; only stops.txt is kept.
+AMTRAK_GTFS_URL = "https://content.amtrak.com/content/gtfs/GTFS.zip"
 
 
 @dataclass(frozen=True)
 class Station:
     name: str
+    #: The code the operator prints on a ticket: "NYP", "BOS". Rail has no
+    #: equivalent of IATA, so this is per-operator and only as good as the
+    #: table it came from — but an exact code match beats any name matching.
+    code: str | None
     uic: str | None
     country: str | None
     timezone: str | None
@@ -106,14 +114,72 @@ def airline(code: str | None) -> str | None:
 
 
 @lru_cache(maxsize=1)
-def _stations() -> list[Station]:
-    path = get_config().data_dir / "stations.csv"
+def _gtfs_stops() -> list[Station]:
+    """Stations from a GTFS feed — Amtrak's, for the United States.
+
+    Trainline covers Europe and nothing else, so "NYP" — the code on every
+    Amtrak ticket into New York, and the one this whole line of work started
+    with — resolved to nothing at all. A GTFS `stops.txt` carries the code, the
+    name, the coordinates and, unusually and usefully, the timezone.
+    """
+    path = get_config().data_dir / "stops.csv"
     try:
         handle = path.open(encoding="utf-8", errors="replace")
     except OSError:
         return []
 
     out: list[Station] = []
+    with handle:
+        for row in csv.DictReader(handle):
+            name = (row.get("stop_name") or "").strip()
+            if not name:
+                continue
+
+            def number(key: str) -> float | None:
+                try:
+                    return float(row.get(key) or "")
+                except (TypeError, ValueError):
+                    return None
+
+            out.append(
+                Station(
+                    name=name,
+                    code=(row.get("stop_code") or row.get("stop_id") or "").strip() or None,
+                    uic=None,
+                    country=None,
+                    timezone=(row.get("stop_timezone") or "").strip() or None,
+                    latitude=number("stop_lat"),
+                    longitude=number("stop_lon"),
+                )
+            )
+    return out
+
+
+@lru_cache(maxsize=1)
+def _by_code() -> dict[str, Station]:
+    """Ticket codes to stations. An exact code beats any name matching."""
+    index: dict[str, Station] = {}
+    for station_row in _gtfs_stops():
+        if station_row.code:
+            index.setdefault(station_row.code.strip().upper(), station_row)
+    return index
+
+
+def station_by_code(code: str | None) -> Station | None:
+    if not code or not (2 <= len(code.strip()) <= 4):
+        return None
+    return _by_code().get(code.strip().upper())
+
+
+@lru_cache(maxsize=1)
+def _stations() -> list[Station]:
+    path = get_config().data_dir / "stations.csv"
+    try:
+        handle = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return list(_gtfs_stops())
+
+    out: list[Station] = list(_gtfs_stops())
     with handle:
         reader = csv.DictReader(handle, delimiter=";")
         for row in reader:
@@ -130,6 +196,7 @@ def _stations() -> list[Station]:
             out.append(
                 Station(
                     name=name,
+                    code=None,
                     uic=(row.get("uic") or "").strip() or None,
                     country=(row.get("country") or "").strip() or None,
                     timezone=(row.get("time_zone") or "").strip() or None,
@@ -240,7 +307,7 @@ def _same_word(printed: str, full: str) -> bool:
 
 def clear_cache() -> None:
     """Forget the loaded tables, so a fresh download is seen."""
-    for cached in (_airlines, _stations, _by_name, _by_first):
+    for cached in (_airlines, _stations, _by_name, _by_first, _gtfs_stops, _by_code):
         cached.cache_clear()
 
 

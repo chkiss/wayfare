@@ -176,11 +176,28 @@ def cmd_fetch_reference(args) -> int:
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             print(f"  could not fetch {label}: {type(exc).__name__}: {exc}")
 
+    # Amtrak ships a whole GTFS feed — 19 MB, most of it route shapes. Only
+    # stops.txt is wanted, and keeping only that is the difference between a
+    # 66 KB table and a fifth of a gigabyte across a few refreshes.
+    print("Downloading Amtrak stations …")
+    try:
+        import io
+        import zipfile
+
+        with urllib.request.urlopen(reference.AMTRAK_GTFS_URL, timeout=300) as response:
+            archive = zipfile.ZipFile(io.BytesIO(response.read()))
+        (cfg.data_dir / "stops.csv").write_bytes(archive.read("stops.txt"))
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        print(f"  could not fetch Amtrak stations: {type(exc).__name__}: {exc}")
+
     reference.clear_cache()
     airlines, stations = reference.available()
     print(f"\n{len(reference._airlines()) if airlines else 0} airlines, "
           f"{len(reference._stations()) if stations else 0} stations.")
-    print("Airline data from OpenTravelData (CC-BY); stations from Trainline (ODbL).")
+    print(
+        "Airline data from OpenTravelData (CC-BY); European stations from Trainline "
+        "(ODbL); US stations from Amtrak's published GTFS feed."
+    )
     return 0
 
 

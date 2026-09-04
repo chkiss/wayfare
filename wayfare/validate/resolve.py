@@ -153,8 +153,16 @@ def _resolve_by_name(place: Place | None) -> list[Issue]:
     # timezone, its coordinates and a UIC code, so where it is known nothing
     # has to be inferred at all.
     from ..reference import station as lookup_station
+    from ..reference import station_by_code
 
-    found = lookup_station(place.name)
+    # The code the ticket prints, wherever it ended up: a reader that saw
+    # "New York (NYP)" puts NYP in the detail, and a model asked for an
+    # airport code puts it there. An exact code beats any name matching, and
+    # US station names cannot be matched by name at all — Amtrak calls Penn
+    # Station "Ny Moynihan Train Hall At Penn Station", which shares not one
+    # leading word with what a ticket or a person calls it.
+    found = station_by_code(place.detail) or station_by_code(place.iata)
+    found = found or lookup_station(place.name)
     if found is not None and found.timezone:
         place.timezone = found.timezone
         if found.latitude is not None and place.latitude is None:
