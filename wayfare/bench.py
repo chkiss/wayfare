@@ -173,6 +173,26 @@ def _expected_from(entry: dict) -> Expected | None:
     )
 
 
+def _one_per_journey(expected: list[Expected]) -> list[Expected]:
+    """Collapse reservations that differ only by who is travelling.
+
+    The corpus files a reservation per traveller: one FCM itinerary holds eight
+    for four flights, because Jane Doe and John Doe are on the same booking. A
+    calendar wants one event per journey — you do not want a flight twice
+    because your spouse is on it too — so scoring wayfare against eight was
+    marking correct behaviour as four missing legs.
+
+    Collapsed on the service and the exact departure, which is as tight an
+    identity as the corpus offers. Two genuinely distinct legs sharing a
+    number *and* a departure minute would have to be the same aircraft.
+    """
+    seen: dict[tuple, Expected] = {}
+    for entry in expected:
+        key = (entry.kind, entry.carrier, entry.number, entry.start, entry.origin)
+        seen.setdefault(key, entry)
+    return list(seen.values())
+
+
 def load_corpus(root: Path, only: str | None = None) -> list[Case]:
     """Every document under `root` that has an answer beside it."""
     cases: list[Case] = []
@@ -188,6 +208,7 @@ def load_corpus(root: Path, only: str | None = None) -> list[Case]:
             continue
 
         expected = [e for e in (_expected_from(x) for x in payload if isinstance(x, dict)) if e]
+        expected = _one_per_journey(expected)
         if not expected:
             continue
 

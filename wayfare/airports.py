@@ -218,6 +218,36 @@ class AirportDB:
                 return match
         return None
 
+    def code_for_name(self, name: str | None) -> Airport | None:
+        """The airport a *name* means, strictly enough to put its code on a record.
+
+        `find_place` is deliberately loose: it only ever had to produce a
+        timezone, so "Berlin-Tegel" resolving to Berlin Brandenburg is fine —
+        same zone, right answer. Writing a code is not fine. Tegel closed in
+        2020 and OurAirports strips the code from a closed airport, so that
+        same lookup would stamp BER on a ticket that says TXL and be confidently
+        wrong about which airport somebody is flying from.
+
+        So the airport's own name has to match word for word, each word of the
+        printed name beginning the matching word of the airport's, and exactly
+        one airport may survive. "London Heathrow" becomes LHR; "Berlin-Tegel"
+        stays unresolved, which is the truthful answer for a code that no
+        longer exists.
+        """
+        wanted = _words(name)
+        if len(wanted) < 2:
+            return None  # One word names a city, not an airport.
+
+        matches = []
+        for airport in self._load().values():
+            if airport.rank > 1:
+                continue
+            if _leading_words(wanted, _words(airport.name)):
+                matches.append(airport)
+
+        unique = {a.iata for a in matches}
+        return matches[0] if len(unique) == 1 else None
+
     def _search_names(self, needle: str) -> Airport | None:
         best: Airport | None = None
         for airport in self._load().values():
@@ -229,6 +259,26 @@ class AirportDB:
                 if best.rank == 0:
                     break
         return best
+
+
+def _words(value: str | None) -> list[str]:
+    text = "".join(ch if ch.isalnum() else " " for ch in str(value or "").casefold())
+    return [word for word in text.split() if word]
+
+
+def _leading_words(wanted: list[str], candidate: list[str]) -> bool:
+    """Does the printed name begin the airport's name, word by word?
+
+    "London Heathrow" begins "London Heathrow Airport". "Berlin Tegel" does not
+    begin "Berlin Brandenburg Airport", which is the whole point: the words
+    after the city are what tell two airports apart.
+    """
+    if not wanted or len(wanted) > len(candidate):
+        return False
+    return all(
+        candidate[i].startswith(word) or word.startswith(candidate[i])
+        for i, word in enumerate(wanted)
+    )
 
 
 @lru_cache(maxsize=1)

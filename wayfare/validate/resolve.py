@@ -135,6 +135,44 @@ def _city_guesses(place: Place) -> list[str]:
     return guesses
 
 
+def _code_from_name(place: Place | None) -> list[Issue]:
+    """Give a named airport its IATA code, so every later check can run.
+
+    Plenty of confirmations print "London Heathrow" and never the code. The
+    reading is right, and the record is then poorer for it: without a code
+    there is no distance, so no block-time check, the title falls back to a
+    long name, and a duplicate on the calendar is harder to spot. Measured on
+    the corpus, this is the largest remaining gap on the flight path — origin
+    and destination scored 41% where the flight number scored 68%.
+
+    Only an unambiguous match on the airport's own name, and only for flights:
+    a station named "Boston" must never acquire an airport's code.
+    """
+    if place is None or place.iata or not place.name:
+        return []
+
+    db = get_airport_db()
+    if not db.available:
+        return []
+
+    airport = db.code_for_name(place.name)
+    if airport is None:
+        return []
+
+    place.iata = airport.iata
+    return [
+        Issue(
+            level=IssueLevel.INFO,
+            code="place.code_from_name",
+            message=(
+                f"'{place.name}' is {airport.iata} ({airport.name}). The document "
+                "names the airport without its code."
+            ),
+            source=SOURCE,
+        )
+    ]
+
+
 def _resolve_by_name(place: Place | None) -> list[Issue]:
     """Give a non-airport place a timezone from the city it names.
 
@@ -247,6 +285,8 @@ def run(itinerary: Itinerary) -> Itinerary:
         for place, when in places:
             if place is not None and id(place) not in seen:
                 seen.add(id(place))
+                if isinstance(record, FlightRecord):
+                    record.issues.extend(_code_from_name(place))
                 record.issues.extend(_resolve_place(place))
                 record.issues.extend(_resolve_by_name(place))
             _apply_zone(when, place)

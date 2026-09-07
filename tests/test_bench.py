@@ -243,3 +243,39 @@ def test_a_document_that_crashed_still_counts_against_the_score(corpus, monkeypa
     assert summary["errors"] == 1
     assert summary["fields"]["number"] == (0, 1)
     assert summary["categories"]["flight"]["expected"] == 1
+
+
+def test_one_event_per_journey_not_per_traveller(corpus):
+    """The corpus files a reservation per traveller; a calendar wants one
+    event per journey. An FCM itinerary held eight for four flights because
+    Jane Doe and John Doe were on the same booking, and scoring against eight
+    marked correct behaviour as four missing legs.
+    """
+    import json as jsonlib
+
+    two_passengers = []
+    for name in ("Jane Doe", "John Doe"):
+        entry = jsonlib.loads(jsonlib.dumps(FLIGHT_ANSWER[0]))
+        entry["underName"] = {"@type": "Person", "name": name}
+        two_passengers.append(entry)
+    (corpus / "lufthansa" / "5_FRA-EWR.txt.json").write_text(
+        jsonlib.dumps(two_passengers), encoding="utf-8"
+    )
+
+    (case,) = bench.load_corpus(corpus)
+    assert len(case.expected) == 1
+
+
+def test_two_real_legs_are_not_collapsed(corpus):
+    """Only reservations identical in service *and* departure minute fold."""
+    import json as jsonlib
+
+    second = jsonlib.loads(jsonlib.dumps(FLIGHT_ANSWER[0]))
+    second["reservationFor"]["flightNumber"] = "456"
+    second["reservationFor"]["departureTime"] = {"@value": "2026-12-09T18:00:00+01:00"}
+    (corpus / "lufthansa" / "5_FRA-EWR.txt.json").write_text(
+        jsonlib.dumps(FLIGHT_ANSWER + [second]), encoding="utf-8"
+    )
+
+    (case,) = bench.load_corpus(corpus)
+    assert len(case.expected) == 2
