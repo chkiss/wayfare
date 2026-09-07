@@ -55,20 +55,33 @@ _ROUTES = (
     re.compile(r"^(?:[^:]*:)?\s*(?P<from>.+?)\s+to\s+(?P<to>.+?)$", re.I),
 )
 
+#: Some operators never write the route on one line and label the ends
+#: instead: "Von: MUNICH ..." / "Nach: TOULOUSE ...". Without this, a Lufthansa
+#: calendar file whose summary says only "Flug nach TOULOUSE FR" has a
+#: destination and no origin anywhere, and produces no record at all — a
+#: correctly written file read as nothing.
+_LABELLED_FROM = re.compile(r"^\s*(?:von|from|de)\s*:\s*(?P<place>.+?)\s*$", re.I | re.M)
+_LABELLED_TO = re.compile(r"^\s*(?:nach|to|a|para)\s*:\s*(?P<place>.+?)\s*$", re.I | re.M)
+
 #: A code in brackets after a station name: "Glasgow Central (GLC)".
 _CODE = re.compile(r"^(?P<name>.+?)\s*\((?P<code>[A-Z0-9]{3,4})\)\s*$")
 
 #: A booking reference, however the operator labels it.
 _CONFIRMATION = re.compile(
     r"(?:booking reference|booking ref|reservation number|confirmation(?: number| code)?"
-    r"|buchungsnummer|auftragsnummer|r[ée]f[ée]rence)\s*[:#]?\s*"
-    r"(?P<value>[A-Z0-9]{5,8})\b",
+    r"|buchungscode|buchungsnummer|auftragsnummer|r[ée]f[ée]rence)\s*[:#]?\s*"
+    r"(?P<value>[A-Z0-9]{5,10})\b",
     re.I,
 )
 
+#: RegioJet opens its summary with the reference and no label at all:
+#: "#9876543210: From Vienna, Hbf, to ...". Anchored to the start, because a
+#: bare "#" followed by digits is a row number as often as a booking.
+_HASH_REFERENCE = re.compile(r"^\s*#(?P<value>[A-Z0-9]{5,12})\b", re.I)
+
 #: "Flight number: LH 123", "Flugnummer LH123".
 _FLIGHT_NUMBER = re.compile(
-    r"(?:flight\s*(?:number|no\.?)|flugnummer)\s*[:#]?\s*(?P<carrier>[A-Z][A-Z0-9])\s*"
+    r"(?:flight\s*(?:number|no\.?)|flugnummer|flugnr\.?)\s*[:#]?\s*(?P<carrier>[A-Z][A-Z0-9])\s*"
     r"(?P<number>\d{1,4})\b",
     re.I,
 )
@@ -215,6 +228,15 @@ def _route(summary: str, flight: bool = False) -> tuple[Place, Place] | None:
     return None
 
 
+def _labelled_route(description: str, flight: bool) -> tuple[Place, Place] | None:
+    """A route written as two labelled lines rather than one."""
+    origin = _first(_LABELLED_FROM, description or "", "place")
+    destination = _first(_LABELLED_TO, description or "", "place")
+    if not origin or not destination:
+        return None
+    return _place(origin, flight), _place(destination, flight)
+
+
 def _first(pattern: re.Pattern, text: str, *groups: str):
     match = pattern.search(text or "")
     if not match:
@@ -247,10 +269,14 @@ def _from_event(event, source_file: str) -> list[Record]:
         event.description.splitlines()[0] if event.description else "", is_flight
     )
     if route is None:
+        route = _labelled_route(event.description, is_flight)
+    if route is None:
         return []
     origin, destination = route
 
-    confirmation = _first(_CONFIRMATION, text, "value")
+    confirmation = _first(_CONFIRMATION, text, "value") or _first(
+        _HASH_REFERENCE, event.summary, "value"
+    )
     start = _local(event.start, event.start_tz, origin)
     end = _local(event.end, event.start_tz, destination)
     if start is None:

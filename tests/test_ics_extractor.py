@@ -164,3 +164,54 @@ def test_a_station_whose_name_contains_a_dash_keeps_it():
     )
     (record,) = icsevent.extract(dashed, "db.ics")
     assert record.origin.name == "Baden-Baden"
+
+
+# --- operators that label things differently -----------------------------
+
+
+GERMAN_AIRLINE = calendar(
+    "SUMMARY:Flug nach TOULOUSE FR",
+    "DTSTART:20170407T091000Z",
+    "DTEND:20170407T110000Z",
+    "DESCRIPTION:Buchungscode: XYZ123\\nFlugnr.: LH 2218\\n"
+    "durchgeführt von: LUFTHANSA\\nKlasse: ECONOMY (W)\\n"
+    "Von: MUNICH DE MUNICH INTERNATIONAL TERMINAL 2\\n"
+    "Nach: TOULOUSE FR BLAGNAC\\n",
+)
+
+
+def test_a_route_written_as_two_labelled_lines_is_still_a_route():
+    """The summary names only the destination — "Flug nach TOULOUSE FR" — so
+    without reading the labelled ends this correctly written file produced no
+    record at all."""
+    (record,) = icsevent.extract(GERMAN_AIRLINE, "lh.ics")
+    assert "MUNICH" in record.origin.name
+    assert "TOULOUSE" in record.destination.name
+
+
+def test_the_german_labels_are_read():
+    (record,) = icsevent.extract(GERMAN_AIRLINE, "lh.ics")
+    assert record.confirmation == "XYZ123"
+    assert (record.carrier, record.number) == ("LH", "2218")
+
+
+def test_a_reference_with_no_label_at_all_is_read():
+    """RegioJet opens the summary with it: "#9876543210: From Vienna, Hbf ..."."""
+    regiojet = calendar(
+        "SUMMARY:#9876543210: From Vienna\\, Hbf\\, to Brno",
+        "DTSTART;TZID=Europe/Vienna:20190102T143900",
+        "DESCRIPTION:Your train journey",
+    )
+    (record,) = icsevent.extract(regiojet, "rj.ics")
+    assert record.confirmation == "9876543210"
+
+
+def test_a_hash_in_the_middle_of_a_line_is_not_a_booking():
+    """A bare "#" and digits is a row number as often as a reference."""
+    noisy = calendar(
+        "SUMMARY:Journey Details: Glasgow Central to London Euston",
+        "DTSTART:20230220T124000",
+        "DESCRIPTION:Train Company: Avanti\\nCoach #4218 seat 21",
+    )
+    (record,) = icsevent.extract(noisy, "nr.ics")
+    assert record.confirmation is None
