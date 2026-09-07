@@ -147,7 +147,7 @@ class Config:
     #: Zen, Nous and OpenRouter as known names, so listing a name alone is
     #: enough to turn one on.
     llm_extra_providers: str = field(
-        default_factory=lambda: os.environ.get("WAYFARE_LLM_PROVIDERS", "zen")
+        default_factory=lambda: os.environ.get("WAYFARE_LLM_PROVIDERS", "nous")
     )
     #: Models to use on an endpoint whose catalogue does not say what anything
     #: costs, as ``provider=model|model[,provider=...]``. Zen is such a
@@ -156,11 +156,14 @@ class Config:
     #: These are wrong the day the provider changes them, which is why they are
     #: configuration and not code.
     llm_provider_models: str = field(
-        #: Only big-pickle by default: measured keyless from this machine,
-        #: hy3 answered 401. A model that needs a key nobody has is a slot in
-        #: the chain spent on a certain failure.
+        #: Measured on this machine: solar-pro4 read a receipt correctly in
+        #: 14 seconds, longcat answered, and step-3.7-flash took 91 seconds and
+        #: returned the carrier as "DEL". Zen is absent because its free tier
+        #: was restricted to OpenCode's own client on 2026-09-07 and now
+        #: answers 400 to everything; put "zen=big-pickle" back if that lifts.
         default_factory=lambda: os.environ.get(
-            "WAYFARE_LLM_PROVIDER_MODELS", "zen=big-pickle"
+            "WAYFARE_LLM_PROVIDER_MODELS",
+            "nous=upstage/solar-pro4:free|meituan/longcat-2.0:free",
         )
     )
     #: Generous, because the free models that answer at all are slow: measured,

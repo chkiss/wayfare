@@ -48,7 +48,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         # the refusal looks like the model declining rather than the request
         # being malformed. Attribution, not identity: nothing here names a
         # person.
-        "tags": ["client=modelchain"],
+        # A `user=` tag is required specifically: without it the refusal is
+        # "missing user tag", not a generic one.
+        "tags": ["client=modelchain", "user=owner"],
     },
     "openrouter": {
         "api_base": "https://openrouter.ai/api/v1",
