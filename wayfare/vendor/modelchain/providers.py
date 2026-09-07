@@ -43,8 +43,11 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "nous": {
         "api_base": "https://inference-api.nousresearch.com/v1",
         "console_url": "https://portal.nousresearch.com",
-        # Nous rejects an untagged request outright ("missing user tag").
-        # These are attribution, not identity: nothing here names a person.
+        # Nous rejects an untagged request outright ("missing tags"), and wants
+        # them in the request *body* — sent as a header they are ignored and
+        # the refusal looks like the model declining rather than the request
+        # being malformed. Attribution, not identity: nothing here names a
+        # person.
         "tags": ["client=modelchain"],
     },
     "openrouter": {

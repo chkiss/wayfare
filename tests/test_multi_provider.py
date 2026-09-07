@@ -32,7 +32,7 @@ def sent(monkeypatch):
     seen = []
 
     def fake_post(url, headers=None, json=None, timeout=None):
-        seen.append({"url": url, "headers": headers or {}, "model": (json or {}).get("model")})
+        seen.append({"url": url, "headers": headers or {}, "model": (json or {}).get("model"), "body": json or {}})
         return Reply()
 
     monkeypatch.setattr(llm.httpx, "post", fake_post)
@@ -88,7 +88,7 @@ def test_a_provider_that_demands_tags_gets_them(monkeypatch):
     """Nous rejects an untagged request outright."""
     seen = sent(monkeypatch)
     llm._attempt("nous:tencent/hy3:free", "text", config.get_config())
-    assert "X-Tags" in seen[0]["headers"]
+    assert seen[0]["body"]["tags"], "Nous wants them in the body; a header is ignored"
 
 
 # --- building the pool --------------------------------------------------

@@ -542,22 +542,26 @@ def _post(model: str, text: str, cfg, messages: list[dict] | None = None) -> htt
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    # Nous rejects an untagged request outright. The tags are attribution, not
-    # identity: nothing here names the person using it.
+
+    body: dict = {
+        # The bare id: the prefix is how wayfare addresses the endpoint,
+        # and the endpoint has never heard of it.
+        "model": name,
+        "temperature": 0,
+        "messages": messages if messages is not None else _messages(text),
+    }
+    # Nous rejects an untagged request outright ("missing tags"), and wants
+    # them in the body — as a header they are silently ignored, which looked
+    # like the model refusing rather than the request being malformed. The
+    # tags are attribution, not identity: nothing here names the person.
     tags = providers.tags(model)
     if tags:
-        headers["X-Tags"] = ",".join(tags)
+        body["tags"] = tags
 
     return httpx.post(
         f"{base.rstrip('/')}/chat/completions",
         headers=headers,
-        json={
-            # The bare id: the prefix is how wayfare addresses the endpoint,
-            # and the endpoint has never heard of it.
-            "model": name,
-            "temperature": 0,
-            "messages": messages if messages is not None else _messages(text),
-        },
+        json=body,
         timeout=cfg.llm_timeout,
     )
 
