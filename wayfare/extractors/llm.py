@@ -678,9 +678,22 @@ def _attempt(model: str, text: str, cfg, messages: list[dict] | None = None):
         detail = response.text[:200].replace("\n", " ")
         return None, _Failure(response.status_code, f"{response.status_code} {detail}")
     if response.status_code >= 400:
-        # A key problem, not a model problem. Say so rather than walking the
-        # whole chain to fail identically each time.
-        raise LLMUnavailable(f"{model}: provider returned {response.status_code}")
+        # A key problem on the endpoint everything else also uses is worth
+        # stopping for: walking the whole chain to fail identically each time
+        # tells the user nothing. A refusal from *one* provider among several
+        # is not that, and treating it as fatal was measured doing real harm —
+        # OpenCode restricted its free tier to its own client, started
+        # answering 400, and every document came back unreadable while
+        # OpenRouter sat there answering in a second. One provider's policy
+        # change must not take out the others.
+        provider, _ = cfg.providers.split(model)
+        fatal = response.status_code in {401, 402} and provider == cfg.default_provider
+        if fatal:
+            raise LLMUnavailable(f"{model}: provider returned {response.status_code}")
+        # Benched as "gone" by the classifier, which is right: a refusal like
+        # this does not clear on its own and needs a person to look.
+        detail = getattr(response, "text", "")[:200].replace("\n", " ")
+        return None, _Failure(response.status_code, f"{response.status_code} {detail}")
 
     try:
         content = response.json()["choices"][0]["message"]["content"]

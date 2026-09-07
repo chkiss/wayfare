@@ -10,6 +10,7 @@ class Reply:
     def __init__(self, status, content=None):
         self.status_code = status
         self._content = content
+        self.text = ""  # real responses always have one
 
     def json(self):
         return {"choices": [{"message": {"content": self._content}}]}

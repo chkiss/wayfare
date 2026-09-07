@@ -235,3 +235,71 @@ def test_the_quorum_can_still_be_raised(monkeypatch):
     monkeypatch.setenv("WAYFARE_LLM_QUORUM", "3")
     config._config = None
     assert config.get_config().llm_quorum == 3
+
+
+def test_one_providers_refusal_does_not_take_out_the_others(monkeypatch):
+    """Measured, and it cost a whole benchmark run: OpenCode restricted its
+    free tier to its own client and began answering
+
+        400 MissingSessionID: OpenCode's free tier can only be used in OpenCode
+
+    Every 4xx was treated as a key problem and raised as fatal, on the
+    reasoning that a key fails the same way on every model. That was true with
+    one endpoint. With two it is false — every document came back unreadable
+    while the other provider sat there answering in a second.
+    """
+    tried = []
+
+    class Refused:
+        status_code = 400
+        text = '{"error":{"type":"MissingSessionID"}}'
+
+        def json(self):
+            return {}
+
+    class Answered:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"records": []}'}}]}
+
+    monkeypatch.setenv("WAYFARE_LLM_API_KEY", "k")
+    monkeypatch.setenv("WAYFARE_LLM_MODEL", "zen:big-pickle")
+    config._config = None
+    monkeypatch.setattr(llm, "free_models", lambda cfg=None: ["spare:free"])
+
+    def fake_post(model, text, cfg, messages=None):
+        tried.append(model)
+        return Refused() if model.startswith("zen:") else Answered()
+
+    monkeypatch.setattr(llm, "_post", fake_post)
+
+    payload, model = llm._call_model("some text", config.get_config())
+    assert payload == {"records": []}
+    assert "zen:big-pickle" in tried, "the refusing provider was still tried"
+    assert model != "zen:big-pickle", "and the working one answered"
+
+
+def test_a_bad_key_on_the_main_endpoint_still_stops(monkeypatch):
+    """Walking the whole chain to fail identically tells the user nothing."""
+    tried = []
+
+    class Unauthorised:
+        status_code = 401
+        text = ""
+
+        def json(self):
+            return {}
+
+    monkeypatch.setenv("WAYFARE_LLM_API_KEY", "k")
+    monkeypatch.setenv("WAYFARE_LLM_MODEL", "openrouter-one:free")
+    config._config = None
+    monkeypatch.setattr(llm, "free_models", lambda cfg=None: ["spare:free"])
+    monkeypatch.setattr(
+        llm, "_post", lambda model, text, cfg, messages=None: tried.append(model) or Unauthorised()
+    )
+
+    with pytest.raises(llm.LLMUnavailable):
+        llm._call_model("some text", config.get_config())
+    assert tried == ["openrouter-one:free"]
