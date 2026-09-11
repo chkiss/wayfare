@@ -413,6 +413,11 @@ def test_the_follow_up_prompt_is_not_quotable_as_evidence():
 class _KeyedConfig:
     llm_api_key = "key"
     llm_model = "model:free"
+    # A stand-in for the config has to carry the off switch too. Leaving it
+    # out is not neutral: the guard reads it, and a stub missing it either
+    # crashes the test or, if the guard were lenient, would quietly let the
+    # model be called in exactly the case the switch exists to prevent.
+    llm_disabled = False
 
 
 def test_the_model_that_read_it_is_named_on_the_event():

@@ -137,6 +137,24 @@ def available() -> bool:
     return bool(cfg.llm_api_key) and not cfg.llm_disabled
 
 
+def _require_backend(cfg) -> None:
+    """Refuse to reach the network unless a model is configured *and* wanted.
+
+    Both reasons raise here rather than in the caller, because the caller that
+    forgets to ask is exactly the bug this guards against: `available()` used
+    to be the only place the off switch was read, and the default quorum of
+    one skipped it entirely. `WAYFARE_DISABLE_LLM=1` then bought nothing, and
+    a 50-document benchmark labelled "deterministic extractors only" spent the
+    day's whole request budget proving it.
+    """
+    if cfg.llm_disabled:
+        raise LLMUnavailable("The model is switched off (WAYFARE_DISABLE_LLM).")
+    if not cfg.llm_api_key:
+        raise LLMUnavailable(
+            "No model API key. Set WAYFARE_LLM_API_KEY or write secrets/llm_api_key."
+        )
+
+
 # --- setup helpers -------------------------------------------------------
 
 
@@ -343,10 +361,7 @@ def extract(
     dropped despite that: read this service and nothing else.
     """
     cfg = get_config()
-    if not cfg.llm_api_key:
-        raise LLMUnavailable(
-            "No model API key. Set WAYFARE_LLM_API_KEY or write secrets/llm_api_key."
-        )
+    _require_backend(cfg)
 
     prompt_text = build_prompt(text, only=only, expect=expect, insist=insist)
     payload, model = _call_model(prompt_text, cfg)
@@ -385,6 +400,7 @@ def read_with(
     while it still has the document and its own answer in front of it.
     """
     cfg = get_config()
+    _require_backend(cfg)
     prompt_text = build_prompt(text, **prompt_options)
 
     value, error = _attempt(model, prompt_text, cfg)
