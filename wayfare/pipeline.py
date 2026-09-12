@@ -27,6 +27,7 @@ from .extractors import consensus
 from .extractors import icsevent
 from .extractors import kitinerary as kitinerary_extractor
 from .extractors import llm as llm_extractor
+from .extractors import railtable
 from . import manifest, progress
 from .ingest import Ingested, ingest, ingest_text
 from .schema import (
@@ -44,7 +45,7 @@ from .validate import completeness, run_all
 #: A calendar attachment sits above KItinerary's document parsers and below a
 #: barcode: it is machine-written by the operator, but it describes the
 #: journey rather than the boarding pass, so a barcode still overrules it.
-TRUST = {"manual": 5, "barcode": 4, "ics": 3, "kitinerary": 2, "llm": 1}
+TRUST = {"manual": 5, "barcode": 4, "ics": 3, "railtable": 3, "kitinerary": 2, "llm": 1}
 
 #: Labels the barcode contents where they are appended to the OCR text, so the
 #: model can tell machine-written data from what was read off the pixels.
@@ -365,6 +366,22 @@ def _process(
                 f"Read {len(from_calendar)} journey"
                 f"{'s' if len(from_calendar) > 1 else ''} from the calendar attachment, "
                 "which states the times exactly.",
+                "pipeline",
+            )
+
+    # 2b. A printed timetable states the connection as exactly as a calendar
+    # attachment does, and for the same reason: the operator's own system laid
+    # it out. Read before the model, which took the first leg of a three-leg
+    # ticket and stopped.
+    if railtable.looks_like_rail_table(ingested.text):
+        from_table = railtable.extract(ingested.text, ingested.source_file)
+        candidates.extend(from_table)
+        if from_table:
+            itinerary.add_issue(
+                IssueLevel.INFO,
+                "railtable.read",
+                f"Read {len(from_table)} leg{'s' if len(from_table) > 1 else ''} "
+                "from the timetable printed on the ticket.",
                 "pipeline",
             )
 
