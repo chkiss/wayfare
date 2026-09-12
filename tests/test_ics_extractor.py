@@ -71,6 +71,69 @@ def test_another_language_is_read_without_being_taught_it():
     assert first.destination.name == "Münster(Westf)Hbf"
 
 
+def test_a_marker_that_ends_in_a_period_is_still_a_marker():
+    """Czech abbreviates to "odj."/"příj.", French to "dép."/"arr.".
+
+    Matching letters only, the period fell outside the marker and the line
+    matched nothing, so these two documents lost every leg they had while the
+    German and Danish ones beside them parsed.
+    """
+    czech = calendar(
+        "SUMMARY:Praha hl.n. -> Wien Hbf",
+        "DTSTART;TZID=Europe/Berlin:20220726T115600",
+        "DESCRIPTION:Cesta\\n"
+        "odj. 11:56 Praha hl.n.  (RJ    79)\\n"
+        "příj. 16:49 Wien Hbf - Kolej 7A-B\\n",
+    )
+    (leg,) = icsevent.extract(czech, "db-cz.ics")
+    assert (leg.operator, leg.number) == ("RJ", "79")
+    assert leg.origin.name == "Praha hl.n."
+    assert leg.destination.name == "Wien Hbf"
+
+    french = calendar(
+        "SUMMARY:Strasbourg -> München Hbf",
+        "DTSTART;TZID=Europe/Berlin:20220726T124600",
+        "DESCRIPTION:Voyage\\n"
+        "dép. 12:46 Strasbourg  (ICE 9573)\\n"
+        "arr. 14:05 Stuttgart Hbf - voie 10\\n\\n"
+        "dép. 14:14 Stuttgart Hbf - voie 16 (ICE  517)\\n"
+        "arr. 16:27 München Hbf - voie 18\\n",
+    )
+    first, second = icsevent.extract(french, "db-fr.ics")
+    assert (first.operator, first.number) == ("ICE", "9573")
+    assert (second.operator, second.number) == ("ICE", "517")
+
+
+def test_an_operator_code_need_not_be_two_to_four_letters():
+    """Swedish X2000 prints as "X2", Danish regional services as a bare "R"."""
+    danish = calendar(
+        "SUMMARY:Stockholm Central -> Koebenhavn H",
+        "DTSTART;TZID=Europe/Berlin:20220726T112100",
+        "DESCRIPTION:Rejse\\n"
+        "fra 11:21 Stockholm Central  (X2   531)\\n"
+        "til 15:48 Malmö Central \\n\\n"
+        "fra 16:13 Malmö Central  (R   1077)\\n"
+        "til 16:49 Koebenhavn H - Spor 1\\n",
+    )
+    first, second = icsevent.extract(danish, "db-dk.ics")
+    assert (first.operator, first.number) == ("X2", "531")
+    assert (second.operator, second.number) == ("R", "1077")
+
+
+def test_a_platform_note_is_not_read_as_a_service():
+    """The platform sits where the service does and must not be taken for one."""
+    italian = calendar(
+        "SUMMARY:Rovereto -> Verona Porta Nuova",
+        "DTSTART;TZID=Europe/Berlin:20220726T135700",
+        "DESCRIPTION:Viaggio\\n"
+        "da 13:57 Rovereto (binario 1)\\n"
+        "a 14:40 Verona Porta Nuova \\n",
+    )
+    (leg,) = icsevent.extract(italian, "db-it.ics")
+    assert leg.operator is None
+    assert leg.number is None
+
+
 # --- airline calendars --------------------------------------------------
 
 

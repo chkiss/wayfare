@@ -95,10 +95,20 @@ _FLIGHT_NUMBER = re.compile(
 #: can check, so the word is not matched at all: whatever begins the first of
 #: these lines is this document's departure marker, and the rest follow from
 #: that. The shape is the same in every language.
+#: The trailing period is part of the marker in several languages — Czech
+#: writes "odj."/"příj." and French "dép."/"arr." — and without it those
+#: documents matched no line at all and lost every leg, while German "ab"/"an"
+#: and Danish "fra"/"til" parsed fine. The abbreviating period is punctuation
+#: on the marker, not a different shape.
 _HAFAS = re.compile(
-    r"^\s*(?P<kind>[^\W\d_]{1,5})\s+(?P<time>\d{1,2}:\d{2})\s+(?P<place>.+?)\s*$",
+    r"^\s*(?P<kind>[^\W\d_]{1,5}\.?)\s+(?P<time>\d{1,2}:\d{2})\s+(?P<place>.+?)\s*$",
 )
-_SERVICE = re.compile(r"\((?P<operator>[A-Z]{2,4})\s+(?P<number>\d{1,5})\)\s*$")
+#: Operator codes are not all two-to-four letters: Swedish X2000 prints as
+#: "X2" and Danish regional services as a bare "R". A leading capital is what
+#: separates a service from the platform note that sits in the same position
+#: ("Vía 14", "binario 1", "Spor 6") — those continue in lower case, so they
+#: cannot reach the space this pattern requires.
+_SERVICE = re.compile(r"\((?P<operator>[A-Z][A-Z0-9]{0,3})\s+(?P<number>\d{1,5})\)\s*$")
 #: The platform, which every language writes differently — "Gleis 19", "Vía
 #: 14", "Spor 6D-E", "Voie 3" — but always as a trailing " - <word> <number>"
 #: after the station. Matched on that shape rather than on a list of words,
