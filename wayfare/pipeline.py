@@ -464,6 +464,28 @@ def _process(
 # --- merging -------------------------------------------------------------
 
 
+def _plain(value) -> str:
+    """Casefolded letters and digits only, with leading zeros dropped."""
+    return "".join(c for c in str(value or "").casefold() if c.isalnum()).lstrip("0")
+
+
+def _service_forms(record) -> set[str]:
+    """Every way this record's service might have been written.
+
+    The operator sometimes sits in its own field and sometimes inside the
+    number, depending on which extractor answered. Both forms are generated so
+    the two can be compared without deciding which is canonical.
+    """
+    number = _plain(getattr(record, "number", None))
+    if not number:
+        return set()
+    operator = _plain(getattr(record, "operator", None))
+    forms = {number}
+    if operator and not number.startswith(operator):
+        forms.add(operator + number)
+    return forms
+
+
 def _same_journey(a: Record, b: Record) -> bool:
     """Do two records describe the same booking?"""
     if a.kind is not b.kind:
@@ -495,10 +517,18 @@ def _same_journey(a: Record, b: Record) -> bool:
         # afternoon, and merging them left one record ending where it started.
         # A flight has always been compared on its number; ground transport
         # deserves the same, and where the numbers are absent, on the route.
-        number_a = str(a.number or "").lstrip("0")
-        number_b = str(b.number or "").lstrip("0")
-        if number_a and number_b:
-            return number_a.casefold() == number_b.casefold()
+        # Two extractors write the same train two ways. The timetable on the
+        # ticket has its own operator column, so it yields number "283" with
+        # operator "EC", while a model reading the same line answers "EC 283".
+        # Compared as raw strings those are different trains, and every leg of
+        # a Czech ticket was counted twice — one leg became two, two became
+        # four.
+        forms_a, forms_b = _service_forms(a), _service_forms(b)
+        if forms_a and forms_b:
+            operator_a, operator_b = _plain(a.operator), _plain(b.operator)
+            if operator_a and operator_b and operator_a != operator_b:
+                return False  # EC 283 and R 283 are different trains.
+            return bool(forms_a & forms_b)
 
         ends_a = (_label(a.origin), _label(a.destination))
         ends_b = (_label(b.origin), _label(b.destination))

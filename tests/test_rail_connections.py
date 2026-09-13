@@ -51,6 +51,30 @@ def test_numberless_legs_on_the_same_route_and_minute_are_one():
     assert _same_journey(first, second)
 
 
+def test_the_operator_inside_the_number_is_the_same_train():
+    """Two extractors write one train two ways.
+
+    The timetable printed on a ticket has its own operator column, so it reads
+    "EC" and "283" separately; a model reading the same line answers "EC 283".
+    Compared as raw strings those looked like different trains, and every leg
+    of a Czech ticket survived twice — one leg became two, two became four.
+    """
+    from_table = leg("283", 17, "Praha hl.n.", "Pardubice hl.n.", operator="EC")
+    from_model = leg("EC 283", 17, "Praha hl.n.", "Pardubice hl.n.", operator="EC")
+    assert _same_journey(from_table, from_model)
+
+    # And where the model does not separate the operator out at all.
+    unsplit = leg("EC 283", 17, "Praha hl.n.", "Pardubice hl.n.", operator=None)
+    assert _same_journey(from_table, unsplit)
+
+
+def test_the_same_number_on_a_different_operator_is_a_different_train():
+    assert not _same_journey(
+        leg("283", 17, "A", "B", operator="EC"),
+        leg("283", 17, "A", "B", operator="R"),
+    )
+
+
 def test_different_days_are_never_the_same_journey():
     first = leg("16", 10, "Frankfurt", "Köln")
     second = leg("16", 10, "Frankfurt", "Köln")
