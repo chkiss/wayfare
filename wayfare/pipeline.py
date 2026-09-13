@@ -28,6 +28,7 @@ from .extractors import icsevent
 from .extractors import kitinerary as kitinerary_extractor
 from .extractors import llm as llm_extractor
 from .extractors import railtable
+from .extractors import structured
 from . import manifest, progress
 from .ingest import Ingested, ingest, ingest_text
 from .schema import (
@@ -45,7 +46,18 @@ from .validate import completeness, run_all
 #: A calendar attachment sits above KItinerary's document parsers and below a
 #: barcode: it is machine-written by the operator, but it describes the
 #: journey rather than the boarding pass, so a barcode still overrules it.
-TRUST = {"manual": 5, "barcode": 4, "ics": 3, "railtable": 3, "kitinerary": 2, "llm": 1}
+TRUST = {
+    "manual": 5,
+    "barcode": 4,
+    # The operator's own machine-written statement of the booking, in this
+    # application's own vocabulary. Above the calendar attachment, which has
+    # to be parsed out of a description written for a human to read.
+    "structured": 4,
+    "ics": 3,
+    "railtable": 3,
+    "kitinerary": 2,
+    "llm": 1,
+}
 
 #: Labels the barcode contents where they are appended to the OCR text, so the
 #: model can tell machine-written data from what was read off the pixels.
@@ -352,6 +364,22 @@ def _process(
             "reader as extra source text.",
             "pipeline",
         )
+
+    # 1b. The page may simply say what the booking is, in schema.org markup.
+    # Read before everything else that interprets: this is the operator's own
+    # statement, in this application's own vocabulary.
+    if structured.looks_like_structured(ingested.text):
+        from_markup = structured.extract(ingested.text, ingested.source_file)
+        candidates.extend(from_markup)
+        if from_markup:
+            itinerary.add_issue(
+                IssueLevel.INFO,
+                "structured.read",
+                f"Read {len(from_markup)} reservation"
+                f"{'s' if len(from_markup) > 1 else ''} from the schema.org "
+                "markup the page publishes about itself.",
+                "pipeline",
+            )
 
     # 2. A calendar attachment states the journey outright — exact times, a
     # named zone, written by the operator's own system. Read before the model,

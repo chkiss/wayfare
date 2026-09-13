@@ -193,12 +193,33 @@ def _one_per_journey(expected: list[Expected]) -> list[Expected]:
     return list(seen.values())
 
 
+def _source_for(answer: Path) -> Path | None:
+    """The document an answer file belongs to, under either convention.
+
+    Most of the corpus names the answer after the whole document —
+    "ticket.txt" and "ticket.txt.json". One directory names it after the stem
+    instead: "booking.html" beside "booking.json". Understanding only the
+    first silently skipped every document in the second, which is not a small
+    omission when they are the ones carrying schema.org markup.
+    """
+    direct = answer.with_suffix("")  # "x.txt.json" -> "x.txt"
+    if direct.exists() and direct.suffix.lower() in READABLE:
+        return direct
+    for suffix in sorted(READABLE):
+        if suffix == ".json":
+            continue  # An answer is not its own document.
+        candidate = answer.with_suffix(suffix)
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def load_corpus(root: Path, only: str | None = None) -> list[Case]:
     """Every document under `root` that has an answer beside it."""
     cases: list[Case] = []
     for answer in sorted(root.rglob("*.json")):
-        source = answer.with_suffix("")  # "x.txt.json" -> "x.txt"
-        if not source.exists() or source.suffix.lower() not in READABLE:
+        source = _source_for(answer)
+        if source is None:
             continue
         try:
             payload = json.loads(answer.read_text(encoding="utf-8"))
