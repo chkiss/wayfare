@@ -134,6 +134,83 @@ def test_a_reservation_nested_in_the_page_graph_is_still_found():
     assert leg.number == "42"
 
 
+MICRODATA = """\
+<html><body>
+<div itemscope itemtype="http://schema.org/FlightReservation">
+  <meta itemprop="reservationNumber" content="XXX007" />
+  <div itemprop="underName" itemscope itemtype="http://schema.org/Person">
+    <meta itemprop="name" content="VOLKER" />
+  </div>
+  <div itemprop="reservationFor" itemscope itemtype="http://schema.org/Flight">
+    <meta itemprop="flightNumber" content="8588" />
+    <div itemprop="airline" itemscope itemtype="http://schema.org/Airline">
+      <meta itemprop="name" content="OPERADOR AIR NOSTRUM" />
+      <meta itemprop="iataCode" content="IB" />
+    </div>
+    <div itemprop="departureAirport" itemscope itemtype="http://schema.org/Airport">
+      <meta itemprop="name" content="MADRID" />
+      <meta itemprop="iataCode" content="MAD" />
+    </div>
+    <meta itemprop="departureTime" content="2017-07-20T17:50:00+02:00" />
+    <div itemprop="arrivalAirport" itemscope itemtype="http://schema.org/Airport">
+      <meta itemprop="iataCode" content="LEI" />
+    </div>
+  </div>
+</div>
+</body></html>
+"""
+
+
+def test_the_same_standard_spelled_as_html_attributes_is_read():
+    (leg,) = structured.extract(MICRODATA, "ib.html")
+
+    assert (leg.carrier, leg.number) == ("IB", "8588")
+    assert (leg.origin.iata, leg.destination.iata) == ("MAD", "LEI")
+    assert leg.confirmation == "XXX007"
+    assert leg.departure.local.hour == 17
+
+
+def test_a_nested_scope_does_not_close_its_parent():
+    """`underName` and `airline` are objects inside the reservation.
+
+    Scopes are closed by counting tags, not by matching names: an itemscope
+    div closes several divs later, and matching on the name would close it at
+    the first one — taking the flight with it.
+    """
+    (leg,) = structured.extract(MICRODATA, "ib.html")
+    assert leg.number == "8588"  # survived two nested scopes before it
+
+
+def test_several_reservations_on_one_page_stay_separate():
+    two = MICRODATA.replace("</body>", MICRODATA.split("<body>")[1].split("</body>")[0]
+                            .replace("8588", "8589").replace("MAD", "LEI2") + "</body>")
+    assert len(structured.extract(two, "two.html")) == 2
+
+
+def test_a_property_value_can_be_the_text_on_the_page():
+    """Not every value hides in a `content` attribute."""
+    visible = """\
+<div itemscope itemtype="http://schema.org/LodgingReservation">
+  <span itemprop="reservationNumber">ABC123</span>
+  <meta itemprop="checkinTime" content="2027-06-15T14:00:00" />
+  <meta itemprop="checkoutTime" content="2027-06-18T11:00:00" />
+  <div itemprop="reservationFor" itemscope itemtype="http://schema.org/LodgingBusiness">
+    <span itemprop="name">Hotel Konqi</span>
+  </div>
+</div>
+"""
+    (stay,) = structured.extract(visible, "hotel.html")
+    assert stay.confirmation == "ABC123"
+    assert stay.property_name == "Hotel Konqi"
+
+
+def test_markup_that_does_not_balance_still_yields_its_booking():
+    """One corpus page ships an unterminated `<base href="...">` and says so."""
+    broken = MICRODATA.replace("<body>", '<body><base href="http://www.iberia.com">')
+    (leg,) = structured.extract(broken, "ib.html")
+    assert leg.number == "8588"
+
+
 def test_a_page_with_no_markup_is_left_alone():
     assert structured.extract("<html><body>Dear passenger</body></html>", "x.html") == []
     assert not structured.looks_like_structured("Dear passenger")

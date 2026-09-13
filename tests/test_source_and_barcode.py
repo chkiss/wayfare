@@ -134,3 +134,63 @@ def test_a_real_boarding_pass_is_not_treated_as_an_unknown_barcode(monkeypatch):
 
     itinerary = pipeline._process(ingest_text("", "pass.png"), source_path=None)
     assert not any(i.code == "barcode.not_a_boarding_pass" for i in itinerary.issues)
+
+
+# --- the year the barcode does not have ---------------------------------
+
+
+def test_a_barcode_and_the_markup_beside_it_are_one_flight():
+    """A boarding pass barcode carries a day of the year and no year.
+
+    The extractor has to assume one, and assumed this year. Compared against
+    a page that states the year outright, the same flight looked like two
+    flights nine years apart, and the traveller was shown it twice.
+    """
+    from_barcode = flight(
+        departure=LocalTime(local=datetime(2026, 7, 20, 0, 0)),
+        provenance=Provenance(extractor="barcode"),
+    )
+    from_markup = flight(
+        departure=LocalTime(local=datetime(2017, 7, 20, 17, 50)),
+        provenance=Provenance(extractor="structured"),
+    )
+    assert pipeline._same_journey(from_barcode, from_markup)
+
+
+def test_a_genuinely_different_day_is_still_a_different_flight():
+    """Only the year is forgiven — the barcode does know the day."""
+    from_barcode = flight(
+        departure=LocalTime(local=datetime(2026, 7, 20, 0, 0)),
+        provenance=Provenance(extractor="barcode"),
+    )
+    from_markup = flight(
+        departure=LocalTime(local=datetime(2017, 9, 3, 17, 50)),
+        provenance=Provenance(extractor="structured"),
+    )
+    assert not pipeline._same_journey(from_barcode, from_markup)
+
+
+def test_the_markup_supplies_the_century_the_barcode_lacks():
+    """Which of the two wins, once they are known to be one flight."""
+    # Through `_merge`, not `_merge_pair`: which of the two is the primary is
+    # the whole question here, and it is `_merge` that decides it from the
+    # trust ladder. The barcode is listed first, as the pipeline reads it
+    # first, so arrival order cannot be what settles this.
+    itinerary = Itinerary()
+    (merged,) = pipeline._merge(
+        [
+            flight(
+                departure=LocalTime(local=datetime(2026, 7, 20, 0, 0)),
+                confirmation="YYY08",
+                provenance=Provenance(extractor="barcode"),
+            ),
+            flight(
+                departure=LocalTime(local=datetime(2017, 7, 20, 17, 50)),
+                confirmation="XXX007",
+                provenance=Provenance(extractor="structured"),
+            ),
+        ],
+        itinerary,
+    )
+    assert merged.departure.local.year == 2017
+    assert merged.confirmation == "XXX007"

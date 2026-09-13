@@ -47,12 +47,17 @@ from .validate import completeness, run_all
 #: barcode: it is machine-written by the operator, but it describes the
 #: journey rather than the boarding pass, so a barcode still overrules it.
 TRUST = {
-    "manual": 5,
-    "barcode": 4,
+    "manual": 6,
     # The operator's own machine-written statement of the booking, in this
-    # application's own vocabulary. Above the calendar attachment, which has
-    # to be parsed out of a description written for a human to read.
-    "structured": 4,
+    # application's own vocabulary — above even the barcode, which is a
+    # compressed subset of it. A boarding pass barcode carries a day of the
+    # year and no year at all, and a booking reference clipped to its field
+    # width; the markup beside it carries the century and the whole
+    # reference. Both are exact about the flight; only one is exact about
+    # when. Read together they gave "YYY08" on the 20th of July 2026 for a
+    # flight the page itself records as XXX007 on the 20th of July 2017.
+    "structured": 5,
+    "barcode": 4,
     "ics": 3,
     "railtable": 3,
     "kitinerary": 2,
@@ -497,6 +502,10 @@ def _plain(value) -> str:
     return "".join(c for c in str(value or "").casefold() if c.isalnum()).lstrip("0")
 
 
+def _from_barcode(record: Record) -> bool:
+    return getattr(record.provenance, "extractor", "") == "barcode"
+
+
 def _service_forms(record) -> set[str]:
     """Every way this record's service might have been written.
 
@@ -523,6 +532,18 @@ def _same_journey(a: Record, b: Record) -> bool:
         if a.carrier and b.carrier and a.number and b.number:
             if (a.carrier, a.number) != (b.carrier, b.number):
                 return False
+            # A boarding pass barcode states a day of the year and no year at
+            # all, so the extractor has to assume one. Comparing that
+            # assumption against a document that states the year outright
+            # rejected a merge between two readings of the same flight —
+            # same carrier, same number, same 20th of July, nine years apart.
+            # Where one side is guessing, only the part it actually knows is
+            # compared.
+            if _from_barcode(a) or _from_barcode(b):
+                return (a.departure.local.month, a.departure.local.day) == (
+                    b.departure.local.month,
+                    b.departure.local.day,
+                )
             return abs((a.departure.local.date() - b.departure.local.date()).days) <= 1
         if a.origin.iata and b.origin.iata and a.destination.iata and b.destination.iata:
             return (
