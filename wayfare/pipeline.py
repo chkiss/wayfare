@@ -469,6 +469,23 @@ def _plain(value) -> str:
     return "".join(c for c in str(value or "").casefold() if c.isalnum()).lstrip("0")
 
 
+def _service_code(value) -> str:
+    """The operator, but only when it is written as a service code.
+
+    Extractors do not agree on what `operator` holds: the calendar attachment
+    puts the service code there ("ICE"), while a model reading the same
+    journey puts the company ("Deutsche Bahn"). Comparing those two as though
+    both were codes said every leg was a different train, and every leg
+    survived twice — which is worse than the doubling it was meant to fix,
+    because it reached the calendar files too.
+
+    So the operator only ever discriminates when both sides look like a code.
+    A company name is not evidence that two records are different trains.
+    """
+    plain = _plain(value)
+    return plain if 0 < len(plain) <= 4 else ""
+
+
 def _service_forms(record) -> set[str]:
     """Every way this record's service might have been written.
 
@@ -525,7 +542,7 @@ def _same_journey(a: Record, b: Record) -> bool:
         # four.
         forms_a, forms_b = _service_forms(a), _service_forms(b)
         if forms_a and forms_b:
-            operator_a, operator_b = _plain(a.operator), _plain(b.operator)
+            operator_a, operator_b = _service_code(a.operator), _service_code(b.operator)
             if operator_a and operator_b and operator_a != operator_b:
                 return False  # EC 283 and R 283 are different trains.
             return bool(forms_a & forms_b)

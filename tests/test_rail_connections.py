@@ -68,6 +68,19 @@ def test_the_operator_inside_the_number_is_the_same_train():
     assert _same_journey(from_table, unsplit)
 
 
+def test_a_company_name_does_not_make_it_a_different_train():
+    """Extractors disagree about what `operator` holds.
+
+    The calendar attachment puts the service code there, a model reading the
+    same journey puts the company. Treating those as rival codes said every
+    leg was a different train and doubled the whole corpus — calendar files
+    included, which the Czech-only doubling had at least spared.
+    """
+    from_calendar = leg("1689", 22, "Hamburg Hbf", "Hannover Hbf", operator="ICE")
+    from_model = leg("ICE 1689", 22, "Hamburg Hbf", "Hannover Hbf", operator="Deutsche Bahn")
+    assert _same_journey(from_calendar, from_model)
+
+
 def test_the_same_number_on_a_different_operator_is_a_different_train():
     assert not _same_journey(
         leg("283", 17, "A", "B", operator="EC"),

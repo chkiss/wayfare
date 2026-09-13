@@ -103,6 +103,59 @@ def test_a_ticket_with_no_reservation_heads_the_table_differently():
     assert leg.departure.local.year == 2017
 
 
+GERMAN = """\
+ Fahrtantritt Hinfahrt: 03.11.2027
+Ihre Reiseverbindung und Reservierung Hinfahrt am 03.11.2027
+Halt                                   Datum    Zeit       Gleis         Produkte    Reservierung
+Berlin Hbf (tief)                      03.11.   ab 07:49   4A-D          ICE 954     1 Sitzplatz, Wg. 34, Pl. 61
+Köln Hbf                               03.11.   an 12:09   6 D-G                     Nichtraucher, Res.Nr. 1234 1013
+Köln Hbf                               03.11.   ab 12:17   10 A-B        S0
+Somewhere(Specific)                    03.11.   an 12:45   3
+"""
+
+
+def test_a_different_operator_with_different_columns_is_read_too():
+    """Deutsche Bahn, not České dráhy: the reason this reads shape, not words.
+
+    The columns are in another order, the service sits past the platform
+    rather than beside the time, and departures are marked "ab"/"an" instead
+    of being inferred. Nothing in the module knows any of that.
+    """
+    first, second = railtable.extract(GERMAN, "db.txt")
+
+    assert (first.operator, first.number) == ("ICE", "954")
+    assert first.origin.name == "Berlin Hbf (tief)"
+    assert first.destination.name == "Köln Hbf"
+    assert first.departure.local.year == 2027
+
+    # "S0" has no space in it and is still a service.
+    assert (second.operator, second.number) == ("S", "0")
+
+
+def test_the_platform_column_is_not_read_as_a_service():
+    """"4A-D" and "10 A-B" sit where a service could, and are not one."""
+    for leg in railtable.extract(GERMAN, "db.txt"):
+        assert leg.number not in {"4", "10", "6", "3"}
+
+
+def test_a_booking_reference_line_is_not_a_station():
+    """A flight itinerary has lines shaped exactly like station rows.
+
+        Date of booking:            23.04.2017  11:09
+        Date of change:             23.04.2017  11:09
+
+    Two of them in a row would pair into a journey between two labels. The
+    colon is what says these are labels — this reader sits above the model in
+    the trust ladder, so a confident wrong answer here overwrites a right one.
+    """
+    flight = (
+        "MR John Doe                                  23.04.2017 | 11:10:45 Uhr\n"
+        "   Date of booking:            23.04.2017  11:09\n"
+        "   Date of change:             23.04.2017  11:09\n"
+    )
+    assert railtable.extract(flight, "eurowings.txt") == []
+
+
 def test_a_document_with_no_table_is_left_alone():
     assert railtable.extract("Dear passenger, your train leaves at 10:00", "x.txt") == []
     assert not railtable.looks_like_rail_table("Jízdenka a místenka")
