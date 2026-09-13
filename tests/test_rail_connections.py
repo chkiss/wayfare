@@ -81,8 +81,22 @@ def test_a_company_name_does_not_make_it_a_different_train():
     assert _same_journey(from_calendar, from_model)
 
 
-def test_the_same_number_on_a_different_operator_is_a_different_train():
-    assert not _same_journey(
+def test_the_operator_is_not_used_to_tell_two_records_apart():
+    """A deliberate trade, and the second thing this file got wrong.
+
+    Rejecting a merge when the operators differ looks obviously right — "EC
+    283" and "R 283" really are different trains. But extractors do not agree
+    on what `operator` holds: reading one Danish itinerary the calendar
+    attachment puts the service code there ("X2", "R", "IC") and the model
+    puts the carrier ("SJ", "DSB", "DB"). Both are two to four letters, so no
+    test separates them, and the rule refused to merge legs that were the same
+    train — seven duplicates on a corpus of thirty-two.
+
+    So two trains sharing a number on one day will merge if that ever happens.
+    That is rarer, and quieter, than showing the traveller the same train
+    twice.
+    """
+    assert _same_journey(
         leg("283", 17, "A", "B", operator="EC"),
         leg("283", 17, "A", "B", operator="R"),
     )

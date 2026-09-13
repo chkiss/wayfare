@@ -469,23 +469,6 @@ def _plain(value) -> str:
     return "".join(c for c in str(value or "").casefold() if c.isalnum()).lstrip("0")
 
 
-def _service_code(value) -> str:
-    """The operator, but only when it is written as a service code.
-
-    Extractors do not agree on what `operator` holds: the calendar attachment
-    puts the service code there ("ICE"), while a model reading the same
-    journey puts the company ("Deutsche Bahn"). Comparing those two as though
-    both were codes said every leg was a different train, and every leg
-    survived twice — which is worse than the doubling it was meant to fix,
-    because it reached the calendar files too.
-
-    So the operator only ever discriminates when both sides look like a code.
-    A company name is not evidence that two records are different trains.
-    """
-    plain = _plain(value)
-    return plain if 0 < len(plain) <= 4 else ""
-
-
 def _service_forms(record) -> set[str]:
     """Every way this record's service might have been written.
 
@@ -540,11 +523,19 @@ def _same_journey(a: Record, b: Record) -> bool:
         # Compared as raw strings those are different trains, and every leg of
         # a Czech ticket was counted twice — one leg became two, two became
         # four.
+        # The operator is deliberately not used to tell two records apart.
+        # Extractors do not agree on what it holds: reading one Danish
+        # itinerary, the calendar attachment puts the service code there
+        # ("X2", "R", "IC") and the model puts the carrier ("SJ", "DSB",
+        # "DB"). Both are two to four letters, so no test separates them, and
+        # treating them as rival codes refused to merge legs that were the
+        # same train — seven duplicates on a corpus of thirty-two.
+        #
+        # The cost is that two trains sharing a number on one day would merge
+        # if their operators differed. That is rarer, and quieter, than
+        # showing the traveller the same train twice.
         forms_a, forms_b = _service_forms(a), _service_forms(b)
         if forms_a and forms_b:
-            operator_a, operator_b = _service_code(a.operator), _service_code(b.operator)
-            if operator_a and operator_b and operator_a != operator_b:
-                return False  # EC 283 and R 283 are different trains.
             return bool(forms_a & forms_b)
 
         ends_a = (_label(a.origin), _label(a.destination))
